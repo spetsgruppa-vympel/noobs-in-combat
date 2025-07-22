@@ -16,11 +16,11 @@ class tile:
         # whether the tile is occupied
         self.occupied = occupied
 
-    def get_terrain_type(self):
+    def get_terrain_type(self):  # returns the terrain type of the tile
         terrain_type = self.terrain_type
         return terrain_type
 
-    def get_occupied(self):
+    def get_occupation(self):  # returns the occupation sttus of the tile
         is_occupied = self.occupied
         return is_occupied
 

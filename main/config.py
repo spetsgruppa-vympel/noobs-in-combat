@@ -4,7 +4,7 @@ debug = True
 # MAP CONFIGURATION
 # ---------------------------
 
-TILE_SIZE = 40
+TILE_SIZE = 40  # tile size in pixels
 MAP_WIDTH = 20   # number of tiles horizontally
 MAP_HEIGHT = 15  # number of tiles vertically
 

@@ -2,7 +2,7 @@
 class units:  # contains the attributes common to every single unit
 
     # define attributes
-    def __init__(self, name, hp, cost, armor, sight, mobility, mobilityType, unitClass, perks=None, weapons=None, description=None, icon=None):
+    def __init__(self, name, hp, cost, armor, sight, mobility, mobilityType, unitClass, heads, transport_weight, perks=None, weapons=None, description=None, icon=None):
         # name of the unit
         self.name = name
 
@@ -27,6 +27,12 @@ class units:  # contains the attributes common to every single unit
 
         # unit class from unitClass
         self.unitclass = unitClass
+
+        # the amount of characters in this unit (for example grunts have 3, sniper team have 2 etc)
+        self.heads = heads
+
+        # the amount of transport slots this unit takes
+        self.transport_weight = transport_weight
 
         # perks, used as list
         self.perks = perks
