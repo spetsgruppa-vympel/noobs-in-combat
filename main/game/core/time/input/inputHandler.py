@@ -1,5 +1,6 @@
 import pygame
 import asyncio
+from main.config import color_print
 
 async def handle_input():
     while True:
@@ -8,4 +9,5 @@ async def handle_input():
                 return  # Exit loop
             elif event.type == pygame.KEYDOWN:
                 print(f"Key pressed: {event.key}")
+
         await asyncio.sleep(0.01)  # Yield control to other tasks
