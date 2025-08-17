@@ -47,7 +47,7 @@ def run_hud():
 
     while running:
         # dt in seconds
-        dt = clock.tick(60) / 1000.0  # delta time, limits FPS to 60
+        dt = clock.tick(60) / 1000.0  # delta time, limit FPS to 60
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (

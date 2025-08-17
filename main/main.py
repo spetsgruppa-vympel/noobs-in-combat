@@ -1,9 +1,9 @@
+import asyncio
+import ctypes
 import os
 import platform
-import ctypes
 import pygame
 import pygame_gui
-import asyncio
 from main.config import color_print
 
 
@@ -60,7 +60,7 @@ class Game:
                     color_print("Exit requested by user.", "IMPORTANT")
                     self.running = False
                 elif event.type == pygame.KEYDOWN:
-                    print(f"Key pressed: {event.key}")
+                    print(f"Key pressed: {pygame.key.name(event.key)}")
                     # future input logic
                     # inputHandler.process(event)
 
