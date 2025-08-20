@@ -6,6 +6,7 @@ import platform
 import pygame_gui
 from main.config import color_print
 
+# TODO: run_hud is outdated, it has been implemented into game class in main.py
 
 def run_hud():
     pygame.init()
