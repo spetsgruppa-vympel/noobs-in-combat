@@ -2,17 +2,72 @@
   "blockTypes": {},
   "customTemplates": {},
   "description": {
-    "text": "Custom theme for snakes-in-combat game"
+    "text": "Custom gray theme for Noobs In Combat game menus"
   },
   "patterns": {},
-  "settings": {},
-  "slug": {
-    "text": "snakes_in_combat_theme"
+  "settings": {
+    "colors": {
+      "background": "#2E2E2E",
+      "primary": "#B0B0B0",
+      "secondary": "#808080",
+      "highlight": "#A9A9A9",
+      "hover": "#C0C0C0",
+      "text": "#FFFFFF",
+      "disabled": "#555555"
+    },
+    "fonts": {
+      "main": {
+        "name": "Arial",
+        "size": 24,
+        "bold": true
+      },
+      "menu": {
+        "name": "Arial",
+        "size": 20,
+        "bold": false
+      },
+      "button": {
+        "name": "Arial",
+        "size": 22,
+        "bold": true
+      }
+    },
+    "spacing": {
+      "padding": 10,
+      "margin": 10,
+      "button_height": 50,
+      "button_width": 200
+    }
   },
-  "styles": {},
+  "slug": {
+    "text": "noobs_in_combat_theme"
+  },
+  "styles": {
+    "menu": {
+      "bg_color": "background",
+      "border_color": "secondary",
+      "border_width": 2
+    },
+    "button": {
+      "bg_color": "primary",
+      "hover_color": "hover",
+      "text_color": "text",
+      "border_color": "secondary",
+      "border_width": 2,
+      "radius": 5
+    },
+    "label": {
+      "text_color": "text",
+      "font": "menu"
+    },
+    "title": {
+      "text_color": "highlight",
+      "font": "main"
+    }
+  },
   "templateParts": {},
   "title": {
-    "text": "Snakes In Combat Theme"
+    "text": "Noobs In Combat Theme"
   },
   "version": {
     "number": 3

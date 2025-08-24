@@ -1,108 +1,190 @@
 import asyncio
-import ctypes
-import os
-import platform
 import pygame
 import pygame_gui
-from main.config import color_print
+from .config import color_print
+from main.game.ui.mainMenu import singleplayer_press, multiplayer_press  # your updated location
 
-
+# ------------------------
+# Main Game Class
+# ------------------------
 class Game:
     def __init__(self):
-        pygame.init()  # initialize pygame modules
+        pygame.init()
         color_print("Initializing HUD...", "IMPORTANT")
 
-        # get current screen resolution
         info = pygame.display.Info()
         self.screen_width, self.screen_height = info.current_w, info.current_h
-
-        # create a resizable window with full screen resolution
         self.screen = pygame.display.set_mode(
             (self.screen_width, self.screen_height), pygame.RESIZABLE
         )
-
-        # set window title
         pygame.display.set_caption("Noobs in Combat")
+        color_print(f"Screen initialized: {self.screen_width}x{self.screen_height}", "IMPORTANT")
 
-        # setup GUI manager with theme
+        # load theme
+        import os
         script_dir = os.path.dirname(os.path.abspath(__file__))
         theme_path = os.path.join(script_dir, "theme.json")
         self.manager = pygame_gui.UIManager((self.screen_width, self.screen_height), theme_path)
+        color_print("GUI Manager initialized with theme.json", "IMPORTANT")
 
-        # maximize window only on windows
-        # skill issue on you if you don't understand os api :tongue_out:
-        if platform.system() == "Windows":
-            wm_info = pygame.display.get_wm_info()
-            hwnd = wm_info.get("window")
-            if hwnd:
-                ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
-                color_print("Window maximized successfully.", "IMPORTANT")
-            else:
-                color_print("Could not obtain window handle to maximize.", "ERROR")
-        else:
-            color_print("OS NOT WINDOWS", "ERROR")
-            raise OSError("ONLY WORKS ON WINDOWS")
+        self.clock = pygame.time.Clock()
+        self.running = True
 
-        self.clock = pygame.time.Clock()  # clock for FPS control
-        self.running = True  # main loop flag
+        # placeholders for lazy loaded assets
+        self._logo = None
+        self._background = None
 
-    async def main_loop(self):
-        # main game loop
-        while self.running:
-            dt = self.clock.tick(60) / 1000.0  # limit FPS to 60 and get delta time
+        # create UI elements
+        self.create_main_menu()
+        color_print("Main menu created.", "IMPORTANT")
 
-            # get all events once
-            events = pygame.event.get()
+    logo_vertical_factor = 0.25  # fraction of screen height above center
 
-            # handle events
-            for event in events:
-                if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
-                    color_print("Exit requested by user.", "IMPORTANT")
-                    self.running = False
-                elif event.type == pygame.KEYDOWN:
-                    print(f"Key pressed: {pygame.key.name(event.key)}")
-                    # future input logic
-                    # inputHandler.process(event)
+    @property
+    def logo(self):
+        if self._logo is None:
+            import os
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            logo_path = os.path.join(root_dir, "assets", "ui", "game_icon.jpg")
+            self._logo = pygame.image.load(logo_path).convert_alpha()
+            color_print("Logo loaded from assets/ui/game_icon.jpg", "IMPORTANT")
+            # scale logo to 40% screen width
+            w = int(self.screen_width * 0.2)
+            h = int(self._logo.get_height() * (w / self._logo.get_width()))
+            self._logo = pygame.transform.smoothscale(self._logo, (w, h))
+            color_print(f"Logo scaled to {w}x{h}", "IMPORTANT")
+        return self._logo
 
-            # fill screen with dark background
-            self.screen.fill((30, 30, 30))
+    @property
+    def background(self):
+        if self._background is None:
+            import os
+            root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            bg_path = os.path.join(root_dir, "assets", "ui", "menu_background.jpg")
+            bg = pygame.image.load(bg_path).convert()
+            color_print("Background loaded from assets/ui/menu_background.jpg", "IMPORTANT")
+            bg = pygame.transform.smoothscale(bg, (self.screen_width, self.screen_height))
+            small = pygame.transform.smoothscale(bg, (self.screen_width // 10, self.screen_height // 10))
+            self._background = pygame.transform.smoothscale(small, (self.screen_width, self.screen_height))
+            color_print("Background scaled and blurred", "IMPORTANT")
+        return self._background
 
-            # update display (draw everything)
-            pygame.display.flip()
+    def create_main_menu(self):
+        # --- Create menu panel ---
+        panel_width = 400
+        panel_height = 250
+        panel_x = (self.screen_width - panel_width) // 2
+        panel_y = (self.screen_height - panel_height) // 2 + 50
 
-            # yield control to asyncio event loop
-            await asyncio.sleep(0)
+        self.menu_panel = self.init_ui(
+            "panel",
+            pygame.Rect(panel_x, panel_y, panel_width, panel_height),
+            self.manager,
+            object_id="#menu_panel"
+        )
+
+        # optional: set panel background color
+        self.menu_panel.background_colour = pygame.Color(50, 50, 50, 200)
+
+        # --- Button dimensions ---
+        button_width = 300
+        button_height = 60
+        button_x = (panel_width - button_width) // 2
+        start_y = 40  # margin from top of panel
+
+        # singleplayer button
+        self.singleplayer_btn = self.init_ui(
+            "button",
+            pygame.Rect(button_x, start_y, button_width, button_height),
+            self.manager,
+            container=self.menu_panel,
+            text="Singleplayer",
+            object_id="#singleplayer_btn"
+        )
+        color_print("Singleplayer button created.", "IMPORTANT")
+
+        # multiplayer button
+        self.multiplayer_btn = self.init_ui(
+            "button",
+            pygame.Rect(button_x, start_y + button_height + 20, button_width, button_height),
+            self.manager,
+            container=self.menu_panel,
+            text="Multiplayer",
+            object_id="#multiplayer_btn"
+        )
+        color_print("Multiplayer button created.", "IMPORTANT")
 
     @staticmethod
-    def init_ui(element_type, rect, manager, **kwargs):
-        # generic UI element initializer
-        ELEMENT_MAP = {
+    def init_ui(element_type, rect, manager, container=None, **kwargs):
+        element_map = {
             "button": pygame_gui.elements.UIButton,
             "slider": pygame_gui.elements.UIHorizontalSlider,
             "label": pygame_gui.elements.UITextBox,
-            "dropdown": pygame_gui.elements.UIDropDownMenu
+            "dropdown": pygame_gui.elements.UIDropDownMenu,
+            "panel": pygame_gui.elements.UIPanel
         }
-        ui_class = ELEMENT_MAP[element_type]
+        ui_class = element_map[element_type]
         params = {
             "relative_rect": rect,
             "manager": manager,
             **kwargs
         }
+        if container is not None:
+            params["container"] = container  # attach to panel/container
+        color_print(f"UI element initialized: {element_type}", "IMPORTANT")
         return ui_class(**params)
 
+    async def main_loop(self):
+        color_print("Starting main loop...", "IMPORTANT")
+        while self.running:
+            dt = self.clock.tick(60) / 1000.0
+            events = pygame.event.get()
 
+            for event in events:
+                if event.type == pygame.QUIT:
+                    self.running = False
+                    color_print("Exit requested by user.", "IMPORTANT")
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    self.running = False
+                    color_print("ESC pressed, quitting...", "WARNING")
+                elif event.type == pygame_gui.UI_BUTTON_PRESSED:
+                    if event.ui_element == self.singleplayer_btn:
+                        color_print("Singleplayer button pressed.", "IMPORTANT")
+                        singleplayer_press()
+                    elif event.ui_element == self.multiplayer_btn:
+                        color_print("Multiplayer button pressed.", "IMPORTANT")
+                        multiplayer_press()
+
+                self.manager.process_events(event)
+
+            self.manager.update(dt)
+
+            # draw background and logo
+            self.screen.blit(self.background, (0, 0))
+
+            # calculate vertical offset dynamically (25% of screen height above center)
+            logo_offset = int(self.screen_height * 0.25)  # adjust 0.25 to move higher/lower
+
+            logo_rect = self.logo.get_rect(
+                center=(self.screen_width // 2, self.screen_height // 2 - logo_offset)
+            )
+            self.screen.blit(self.logo, logo_rect)
+
+            # draw UI
+            self.manager.draw_ui(self.screen)
+            pygame.display.flip()
+            await asyncio.sleep(0)
+
+
+# ------------------------
+# Entry Point
+# ------------------------
 if __name__ == "__main__":
     async def main():
-        # import HUD logic, might do additional setup
-
-        # create game instance
+        color_print("Launching game...", "IMPORTANT")
         game = Game()
-
-        # run main loop
         await game.main_loop()
-
-        # cleanup pygame when done
         pygame.quit()
+        color_print("Pygame quit successfully.", "IMPORTANT")
 
-    # start asyncio event loop
     asyncio.run(main())
