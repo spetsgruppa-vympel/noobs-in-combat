@@ -9,6 +9,10 @@ from main.game.ui.mainMenu import singleplayer_press, multiplayer_press  # your 
 # ------------------------
 class Game:
     def __init__(self):
+        self.menu_panel = None
+        self.multiplayer_btn = None
+        self.singleplayer_btn = None
+        self.quit_dialog = None
         pygame.init()
         color_print("Initializing HUD...", "IMPORTANT")
 
@@ -70,7 +74,7 @@ class Game:
         return self._background
 
     def create_main_menu(self):
-        # --- Create menu panel ---
+        # --- create menu panel ---
         panel_width = 400
         panel_height = 250
         panel_x = (self.screen_width - panel_width) // 2
@@ -83,7 +87,7 @@ class Game:
             object_id="#menu_panel"
         )
 
-        # optional: set panel background color
+        # set panel background color
         self.menu_panel.background_colour = pygame.Color(50, 50, 50, 200)
 
         # --- Button dimensions ---
@@ -114,6 +118,7 @@ class Game:
         )
         color_print("Multiplayer button created.", "IMPORTANT")
 
+    #   ---ui initialization function---
     @staticmethod
     def init_ui(element_type, rect, manager, container=None, **kwargs):
         element_map = {
@@ -134,50 +139,82 @@ class Game:
         color_print(f"UI element initialized: {element_type}", "IMPORTANT")
         return ui_class(**params)
 
+    # ---main loop---
     async def main_loop(self):
-        color_print("Starting main loop...", "IMPORTANT")
+        color_print("starting main loop...", "IMPORTANT")
         while self.running:
             dt = self.clock.tick(60) / 1000.0
             events = pygame.event.get()
 
+            # guard clause for quit
             for event in events:
                 if event.type == pygame.QUIT:
                     self.running = False
-                    color_print("Exit requested by user.", "IMPORTANT")
-                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    self.running = False
-                    color_print("ESC pressed, quitting...", "WARNING")
-                elif event.type == pygame_gui.UI_BUTTON_PRESSED:
+                    color_print("exit requested by user.", "IMPORTANT")
+                    continue
+
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    color_print("esc pressed, asking for confirmation...", "WARNING")
+                    dialog_w, dialog_h = 330, 200
+                    # sets esc dialog box dimensions
+                    dialog_x = (self.screen_width - dialog_w) // 2  # sets dialog box positions
+                    dialog_y = (self.screen_height - dialog_h) // 2
+
+                    self.quit_dialog = pygame_gui.windows.UIConfirmationDialog(
+                        rect=pygame.Rect(dialog_x, dialog_y, dialog_w, dialog_h),
+                        manager=self.manager,
+                        window_title="Confirm Quit",
+                        action_long_desc="Are you sure you want to quit?",
+                        action_short_name="Quit",
+                        blocking=True
+                    )
+                    continue
+
+                if event.type == pygame_gui.UI_CONFIRMATION_DIALOG_CONFIRMED:
+                    if event.ui_element == getattr(self, "quit_dialog", None):
+                        color_print("quit confirmed by user.", "IMPORTANT")
+                        self.running = False
+                        continue
+
+                if event.type == pygame_gui.UI_BUTTON_PRESSED:
                     if event.ui_element == self.singleplayer_btn:
-                        color_print("Singleplayer button pressed.", "IMPORTANT")
+                        color_print("singleplayer button pressed.", "IMPORTANT")
                         singleplayer_press()
                     elif event.ui_element == self.multiplayer_btn:
-                        color_print("Multiplayer button pressed.", "IMPORTANT")
+                        color_print("multiplayer button pressed.", "IMPORTANT")
                         multiplayer_press()
+                    continue
 
                 self.manager.process_events(event)
 
+            # update gui manager
             self.manager.update(dt)
 
-            # draw background and logo
+            # draw background
             self.screen.blit(self.background, (0, 0))
 
-            # calculate vertical offset dynamically (25% of screen height above center)
-            logo_offset = int(self.screen_height * 0.25)  # adjust 0.25 to move higher/lower
-
+            # responsive logo placement (25% of screen height above center)
+            logo_offset = int(self.screen_height * 0.25)
             logo_rect = self.logo.get_rect(
                 center=(self.screen_width // 2, self.screen_height // 2 - logo_offset)
             )
             self.screen.blit(self.logo, logo_rect)
 
-            # draw UI
+            # keep menu panel centered responsively
+            panel_width, panel_height = self.menu_panel.get_relative_rect().size
+            self.menu_panel.set_relative_position((
+                (self.screen_width - panel_width) // 2,
+                (self.screen_height - panel_height) // 2 + 50
+            ))
+
+            # draw gui
             self.manager.draw_ui(self.screen)
             pygame.display.flip()
             await asyncio.sleep(0)
 
 
 # ------------------------
-# Entry Point
+# entry point
 # ------------------------
 if __name__ == "__main__":
     async def main():
