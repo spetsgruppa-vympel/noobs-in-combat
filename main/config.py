@@ -23,8 +23,9 @@ pygame.init()
 info = display.Info()
 SCREEN_WIDTH, SCREEN_HEIGHT = info.current_w, info.current_h
 REFERENCE_SCREEN_WIDTH, REFERENCE_SCREEN_HEIGHT = 1920, 1080
-SCREEN_HEIGHT_CONSTANT = 0
-SCREEN_WIDTH_CONSTANT = 0
+# cache the constants
+SCREEN_HEIGHT_CONSTANT = False
+SCREEN_WIDTH_CONSTANT = False
 
 #||||||||||||||||||||||||||||
 # CUSTOM EXCEPTIONS
@@ -66,17 +67,21 @@ def color_print(text, flag=None):
 # ---------------------------
 
 def resolution_converter(coord, axis):
-    global SCREEN_WIDTH, SCREEN_HEIGHT, REFERENCE_SCREEN_WIDTH, REFERENCE_SCREEN_WIDTH, SCREEN_HEIGHT_CONSTANT, SCREEN_WIDTH_CONSTANT
+    # convert from reference size (check REFERENCE_SCREEN_WIDTH and _HEIGHT
+    global SCREEN_WIDTH, SCREEN_HEIGHT, REFERENCE_SCREEN_WIDTH, REFERENCE_SCREEN_HEIGHT, SCREEN_HEIGHT_CONSTANT, SCREEN_WIDTH_CONSTANT
+
     if axis == 'x':
-        if SCREEN_WIDTH_CONSTANT != 0:  # if not done before, cache the screen width constant for easier things
+        if not SCREEN_WIDTH_CONSTANT:  # if not done before, cache the screen width constant for faster access
             SCREEN_WIDTH_CONSTANT = SCREEN_WIDTH / REFERENCE_SCREEN_WIDTH
             color_print(f"Calculated SCREEN_WIDTH_CONSTANT: {SCREEN_WIDTH_CONSTANT} and sending the multiplication.")
-            return SCREEN_WIDTH_CONSTANT * coord
+        return SCREEN_WIDTH_CONSTANT * coord
 
-    elif axis == 'y':
-        multiplier = coord / REFERENCE_SCREEN_HEIGHT * SCREEN_HEIGHT
-        print(f"Calculated resolution rescaling, original is {coord}, multiplier is {multiplier}")
-        return int(multiplier)
+    if axis == 'y':
+        if not SCREEN_HEIGHT_CONSTANT:  # if not done before, cache the screen height constant for faster access
+            SCREEN_HEIGHT_CONSTANT = SCREEN_HEIGHT / REFERENCE_SCREEN_HEIGHT
+            color_print(f"Calculated SCREEN_WIDTH_CONSTANT: {SCREEN_HEIGHT_CONSTANT} and sending the multiplication.")
+        return SCREEN_HEIGHT_CONSTANT * coord
+
     else:
         raise ValueError("Axis must be 'x' or 'y'")
 
@@ -89,7 +94,7 @@ _cached_root = None  # module-level cache for the root dir
 
 def get_project_root(marker="main"):
     # automatically finds the project root by looking for a folder named `marker`.
-    # Caches the result for future calls.
+    # caches the result for future calls.
     global _cached_root
     if _cached_root:
         return _cached_root

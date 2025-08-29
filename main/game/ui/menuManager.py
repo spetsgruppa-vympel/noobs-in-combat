@@ -3,21 +3,7 @@ import pygame
 import pygame_gui
 from main.config import resolution_converter, color_print, get_project_root
 
-# ------------------------
-# BUTTON CALLBACK FUNCTIONS
-# ------------------------
 
-def singleplayer_press():
-    pass
-    # TODO: starting singleplayer logic here
-
-def multiplayer_press():
-    pass
-    # TODO: starting multiplayer logic here
-
-def loadout_press():
-    pass
-    # TODO: starting loadout logic here
 
 # ------------------------
 # MENUMANAGER CLASS
@@ -45,7 +31,7 @@ class MenuManager:
         self._singleplayer_btn = None
         self._multiplayer_btn = None
         self._loadout_btn = None
-        self.quit_dialog = None
+        self._quit_dialog = None
 
         # cache static menu surface
         self.static_surface = pygame.Surface((screen_width, screen_height))
@@ -56,7 +42,7 @@ class MenuManager:
         self.draw_static()  # pre-draw static elements
 
     # ---------------------------
-    # Lazy-loaded assets
+    # lazy-loaded assets
     # ---------------------------
     @property
     def logo(self):
@@ -85,7 +71,7 @@ class MenuManager:
         return self._background
 
     # ---------------------------
-    # Lazy-loaded buttons
+    # lazy-loaded buttons
     # ---------------------------
     @property
     def singleplayer_btn(self):
@@ -100,7 +86,7 @@ class MenuManager:
         return self._loadout_btn
 
     # ---------------------------
-    # Menu creation
+    # menu creation
     # ---------------------------
     def create_main_menu(self):
         # ---------------------------
@@ -120,8 +106,8 @@ class MenuManager:
         self.menu_panel.background_colour = pygame.Color(50, 50, 50, 200)
 
         # ---------------------------
-        # BUTTONS
-        # Reference resolution values:
+        # BUTTONS (1920x1080)
+        # reference resolution values:
         # width=300, height=60, margin_y=40
         # ---------------------------
 
@@ -130,7 +116,9 @@ class MenuManager:
         button_x = (panel_width - button_width) // 2
         start_y = resolution_converter(40, 'y')
 
-        # Singleplayer button
+
+
+        # singleplayer button
         self._singleplayer_btn = self.init_ui(
             "button",
             pygame.Rect(button_x, start_y, button_width, button_height),
@@ -141,7 +129,7 @@ class MenuManager:
         )
         self.color_print("Singleplayer button created.", "IMPORTANT")
 
-        # Multiplayer button
+        # multiplayer button
         self._multiplayer_btn = self.init_ui(
             "button",
             pygame.Rect(button_x, start_y + int(button_height * 1.1),
@@ -153,7 +141,7 @@ class MenuManager:
         )
         self.color_print("Multiplayer button created.", "IMPORTANT")
 
-        # Loadout button
+        # loadout button
         self._loadout_btn = self.init_ui(
             "button",
             pygame.Rect(button_x, start_y + int(button_height * 2.2),
@@ -164,6 +152,20 @@ class MenuManager:
             object_id="#loadout_btn"
         )
         self.color_print("Loadout button created.", "IMPORTANT")
+
+        # quit dialog sizes
+        dialog_w, dialog_h = resolution_converter(330, "x"), resolution_converter(200, "y")
+        dialog_x = (self.screen_width - dialog_w) // 2
+        dialog_y = (self.screen_height - dialog_h) // 2
+
+        self._quit_dialog = self.pygame_gui.windows.UIConfirmationDialog(
+                        rect=self.pygame.Rect(dialog_x, dialog_y, dialog_w, dialog_h),
+                        manager=self.manager,
+                        window_title="Confirm Quit",
+                        action_long_desc="Are you sure you want to quit?",
+                        action_short_name="Quit",
+                        blocking=True
+                    )
 
     # ---------------------------
     # UI INITIALIZATION HELPER
@@ -207,10 +209,37 @@ class MenuManager:
         self.screen.blit(self.static_surface, (0, 0))
         self.manager.draw_ui(self.screen)
 
+    # ------------------------
+    # BUTTON CALLBACK FUNCTIONS
+    # ------------------------
+
+    def singleplayer_press(self):
+        color_print("singleplayer button pressed", "IMPORTANT")
+        pass
+        # TODO: starting singleplayer logic here
+
+    def multiplayer_press(self):
+        color_print("multiplayer button pressed", "IMPORTANT")
+        pass
+        # TODO: starting multiplayer logic here
+
+    def loadout_press(self):
+        color_print("loadout button pressed", "IMPORTANT")
+        pass
+        # TODO: starting loadout logic here
+
     # ---------------------------
     # EVENT PROCESSING
     # ---------------------------
     def process_events(self, events):
-        # process Pygame events through GUI manager
         for event in events:
             self.manager.process_events(event)
+
+            # process ui button presses
+            if event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED:
+                if event.ui_element == self._singleplayer_btn:
+                    self.singleplayer_press()
+                elif event.ui_element == self._multiplayer_btn:
+                    self.multiplayer_press()
+                elif event.ui_element == self._loadout_btn:
+                    self.loadout_press()
