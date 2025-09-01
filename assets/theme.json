@@ -1,75 +1,57 @@
+
+
 {
-  "blockTypes": {},
-  "customTemplates": {},
-  "description": {
-    "text": "Custom gray theme for Noobs In Combat game menus"
-  },
-  "patterns": {},
-  "settings": {
-    "colors": {
-      "background": "#2E2E2E",
-      "primary": "#B0B0B0",
-      "secondary": "#808080",
-      "highlight": "#A9A9A9",
-      "hover": "#C0C0C0",
-      "text": "#FFFFFF",
-      "disabled": "#555555"
+    "text_box":
+    {
+        "colours":
+        {
+            "link_text":"#F080E0,#8080E0,0",
+            "link_hover":"#FF8FEF",
+            "regular_text": "#D0D0D0,#FFFFFF,#D050FF,90"
+        },
+        "misc":
+        {
+            "shape": "rounded_rectangle",
+            "shape_corner_radius": "10",
+            "border_width": "1",
+            "padding": "10,10",
+            "link_normal_underline": "0",
+            "link_hover_underline": "0",
+            "line_spacing": "0.9"
+
+        }
     },
-    "fonts": {
-      "main": {
-        "name": "Arial",
-        "size": 24,
-        "bold": true
-      },
-      "menu": {
-        "name": "Arial",
-        "size": 20,
-        "bold": false
-      },
-      "button": {
-        "name": "Arial",
-        "size": 22,
-        "bold": true
-      }
+    "text_box.vertical_scroll_bar":
+    {
+        "misc":
+        {
+            "shape": "rounded_rectangle",
+            "shape_corner_radius": "9"
+        }
     },
-    "spacing": {
-      "padding": 10,
-      "margin": 10,
-      "button_height": 50,
-      "button_width": 200
-    }
-  },
-  "slug": {
-    "text": "noobs_in_combat_theme"
-  },
-  "styles": {
-    "menu": {
-      "bg_color": "background",
-      "border_color": "secondary",
-      "border_width": 2
+    "text_box.vertical_scroll_bar.button":
+    {
+        "misc":
+        {
+            "shape": "rounded_rectangle",
+            "shape_corner_radius": "7"
+        }
     },
-    "button": {
-      "bg_color": "primary",
-      "hover_color": "hover",
-      "text_color": "text",
-      "border_color": "secondary",
-      "border_width": 2,
-      "radius": 5
+
+    "@white_text_box":
+    {
+        "colours":
+        {
+            "dark_bg":"#EEEFEF",
+            "normal_border": "#884422"
+        },
+
+        "misc":
+        {
+            "border_width": "6",
+            "padding": "5,5"
+
+        }
     },
-    "label": {
-      "text_color": "text",
-      "font": "menu"
-    },
-    "title": {
-      "text_color": "highlight",
-      "font": "main"
-    }
-  },
-  "templateParts": {},
-  "title": {
-    "text": "Noobs In Combat Theme"
-  },
-  "version": {
-    "number": 3
-  }
+  "version": 3
 }

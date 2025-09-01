@@ -92,10 +92,13 @@ def resolution_converter(coord, axis):
 _cached_root = None  # module-level cache for the root dir
 
 
+
 def get_project_root(marker="main"):
     # automatically finds the project root by looking for a folder named `marker`.
     # caches the result for future calls.
     global _cached_root
+    # noinspection PyUnreachableCode
+    # STUPID PYCHARM this is accessible SCREW YOU JETBRAINS!!!
     if _cached_root:
         return _cached_root
 

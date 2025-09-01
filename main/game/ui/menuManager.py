@@ -3,8 +3,6 @@ import pygame
 import pygame_gui
 from main.config import resolution_converter, color_print, get_project_root
 
-
-
 # ------------------------
 # MENUMANAGER CLASS
 # ------------------------
@@ -20,9 +18,8 @@ class MenuManager:
         self.color_print = color_print
 
         # GUI manager with theme
-        theme_path = os.path.join(get_project_root(), "assets", "theme.json")
-        self.manager = pygame_gui.UIManager((screen_width, screen_height), theme_path)
-        color_print("GUI Manager initialized with theme.json", "IMPORTANT")
+        self.manager = pygame_gui.UIManager((screen_width, screen_height))
+        color_print("GUI Manager initialized with code-based theme.", "IMPORTANT")
 
         # placeholders for lazy loaded assets and UI
         self._logo = None
@@ -36,13 +33,17 @@ class MenuManager:
         # cache static menu surface
         self.static_surface = pygame.Surface((screen_width, screen_height))
 
+        # store UI elements in a list
+        self.ui_elements = []  # track created elements
+
         # create UI
         self.create_main_menu()
         color_print("Main menu created.", "IMPORTANT")
         self.draw_static()  # pre-draw static elements
 
+
     # ---------------------------
-    # lazy-loaded assets
+    # loaded assets
     # ---------------------------
     @property
     def logo(self):
@@ -88,6 +89,9 @@ class MenuManager:
     # ---------------------------
     # menu creation
     # ---------------------------
+
+
+
     def create_main_menu(self):
         # ---------------------------
         # PANEL (reference: 400x350 centered on 1920x1080)
@@ -95,7 +99,7 @@ class MenuManager:
         panel_width = resolution_converter(400, 'x')
         panel_height = resolution_converter(350, 'y')
         panel_x = (self.screen_width - panel_width) // 2
-        panel_y = (self.screen_height - panel_height) // 2
+        panel_y = (self.screen_height - panel_height) // 1.5
 
         self.menu_panel = self.init_ui(
             "panel",
@@ -103,7 +107,6 @@ class MenuManager:
             self.manager,
             object_id="#menu_panel"
         )
-        self.menu_panel.background_colour = pygame.Color(50, 50, 50, 200)
 
         # ---------------------------
         # BUTTONS (1920x1080)
@@ -115,8 +118,6 @@ class MenuManager:
         button_height = resolution_converter(60, 'y')
         button_x = (panel_width - button_width) // 2
         start_y = resolution_converter(40, 'y')
-
-
 
         # singleplayer button
         self._singleplayer_btn = self.init_ui(
@@ -153,35 +154,41 @@ class MenuManager:
         )
         self.color_print("Loadout button created.", "IMPORTANT")
 
-        # quit dialog sizes
-        dialog_w, dialog_h = resolution_converter(330, "x"), resolution_converter(200, "y")
-        dialog_x = (self.screen_width - dialog_w) // 2
-        dialog_y = (self.screen_height - dialog_h) // 2
-
-        self._quit_dialog = self.pygame_gui.windows.UIConfirmationDialog(
-                        rect=self.pygame.Rect(dialog_x, dialog_y, dialog_w, dialog_h),
-                        manager=self.manager,
-                        window_title="Confirm Quit",
-                        action_long_desc="Are you sure you want to quit?",
-                        action_short_name="Quit",
-                        blocking=True
-                    )
-
     # ---------------------------
     # UI INITIALIZATION HELPER
     # ---------------------------
 
-    @staticmethod
-    def init_ui(element_type, rect, manager, container=None, **kwargs):
+    def init_ui(self, element_type, rect, manager, container=None, **kwargs):
         import pygame_gui.elements as elements
+        import pygame_gui.windows as windows
+        from .UItheme import UITheme
+
         element_map = {
             "button": elements.UIButton,
             "slider": elements.UIHorizontalSlider,
-            "label": elements.UITextBox,
+            "label": elements.UILabel,
             "dropdown": elements.UIDropDownMenu,
-            "panel": elements.UIPanel
+            "panel": elements.UIPanel,
+            "textbox": elements.UITextBox,
+            "confirmation_dialog": windows.UIConfirmationDialog
         }
+
         ui_class = element_map[element_type]
+
+        # confirmation dialogs use different params than normal elements
+        if element_type == "confirmation_dialog":
+            element = ui_class(
+                rect=rect,
+                manager=manager,
+                **kwargs
+            )
+            # style background / border like panels
+            element.background_colour = UITheme.BACKGROUND
+            element.border_colour = UITheme.SECONDARY
+            element.rebuild()
+            return element
+
+        # --- standard element creation ---
         params = {
             "relative_rect": rect,
             "manager": manager,
@@ -189,7 +196,53 @@ class MenuManager:
         }
         if container:
             params["container"] = container
-        return ui_class(**params)
+
+        element = ui_class(**params)
+        self.ui_elements.append(element)
+
+        # ---- apply theme styling ----
+        if element_type == "button":
+            element.colours.update({
+                "normal_bg": UITheme.PRIMARY,
+                "hovered_bg": UITheme.HOVER,
+                "disabled_bg": UITheme.DISABLED,
+                "normal_text": UITheme.TEXT,
+                "hovered_text": UITheme.TEXT,
+                "disabled_text": UITheme.SECONDARY,
+                "normal_border": UITheme.SECONDARY,
+                "hovered_border": UITheme.HIGHLIGHT
+            })
+            element.rebuild()
+
+        elif element_type in ("dropdown", "slider"):
+            element.colours.update({
+                "normal_bg": UITheme.PRIMARY,
+                "hovered_bg": UITheme.HOVER,
+                "disabled_bg": UITheme.DISABLED,
+                "normal_text": UITheme.TEXT,
+                "hovered_text": UITheme.TEXT,
+                "disabled_text": UITheme.SECONDARY,
+                "normal_border": UITheme.SECONDARY
+            })
+            element.rebuild()
+
+        elif element_type == "panel":
+            element.background_colour = UITheme.BACKGROUND
+            element.border_colour = UITheme.SECONDARY
+            element.rebuild()
+
+        elif element_type == "label":
+            if "text" in kwargs:
+                element.set_text(
+                    f'<font color="{UITheme.TEXT}">{kwargs["text"]}</font>'
+                )
+
+        elif element_type == "textbox":
+            element.set_text(
+                f'<font color="{UITheme.TEXT}">{kwargs.get("html_text", "")}</font>'
+            )
+
+        return element
 
     # ---------------------------
     # DRAW MENU
@@ -210,6 +263,24 @@ class MenuManager:
         self.manager.draw_ui(self.screen)
 
     # ------------------------
+    # CLEAR UI DEFINITION
+    # ------------------------
+
+    def clear_element(self,
+                 element_clear, # which element(s) to be cleared
+                 ):
+        if element_clear == "all":
+            for element in self.ui_elements:
+                element.kill()
+            self.ui_elements.clear()
+
+            self._singleplayer_btn = None
+            self._multiplayer_btn = None
+            self._loadout_btn = None
+            self.menu_panel = None
+            self._quit_dialog = None
+
+    # ------------------------
     # BUTTON CALLBACK FUNCTIONS
     # ------------------------
 
@@ -228,14 +299,34 @@ class MenuManager:
         pass
         # TODO: starting loadout logic here
 
+
     # ---------------------------
     # EVENT PROCESSING
     # ---------------------------
+
     def process_events(self, events):
+
+        # quit dialog sizes
+        dialog_w, dialog_h = resolution_converter(330, "x"), resolution_converter(200, "y")
+        dialog_x = (self.screen_width - dialog_w) // 2
+        dialog_y = (self.screen_height - dialog_h) // 2
+
+        def init_quit_dialog():
+            if self._quit_dialog is None:
+                self._quit_dialog = self.init_ui(
+                    "confirmation_dialog",
+                    pygame.Rect(dialog_x, dialog_y, dialog_w, dialog_h),
+                    self.manager,
+                    window_title="Confirm Quit",
+                    action_long_desc="Are you sure you want to quit?",
+                    action_short_name="Quit",
+                    blocking=True
+                )
+
         for event in events:
             self.manager.process_events(event)
 
-            # process ui button presses
+            # button presses
             if event.type == pygame.USEREVENT and event.user_type == pygame_gui.UI_BUTTON_PRESSED:
                 if event.ui_element == self._singleplayer_btn:
                     self.singleplayer_press()
@@ -243,3 +334,27 @@ class MenuManager:
                     self.multiplayer_press()
                 elif event.ui_element == self._loadout_btn:
                     self.loadout_press()
+
+            elif event.type in (pygame.KEYDOWN, pygame.QUIT):
+                if event.type == pygame.QUIT:
+                    # noinspection PyUnreachableCode
+                    if self._quit_dialog:
+                        # this code IS in fact accessible pycharm you stupid-
+                        print("quit")
+                        return "quit"
+                if event.type == pygame.KEYDOWN and event.key != pygame.K_ESCAPE:
+                    continue
+                init_quit_dialog()
+
+            # quit confirmed
+            elif event.type == pygame_gui.UI_CONFIRMATION_DIALOG_CONFIRMED:
+                if event.ui_element == self._quit_dialog:
+                    self._quit_dialog = None
+                    return "quit"
+
+            # quit dialog closed without confirming
+            elif event.type == pygame_gui.UI_WINDOW_CLOSE:
+                if event.ui_element == self._quit_dialog:
+                    self._quit_dialog = None
+
+        return None
