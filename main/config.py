@@ -79,7 +79,7 @@ def resolution_converter(coord, axis):
     if axis == 'y':
         if not SCREEN_HEIGHT_CONSTANT:  # if not done before, cache the screen height constant for faster access
             SCREEN_HEIGHT_CONSTANT = SCREEN_HEIGHT / REFERENCE_SCREEN_HEIGHT
-            color_print(f"Calculated SCREEN_WIDTH_CONSTANT: {SCREEN_HEIGHT_CONSTANT} and sending the multiplication.")
+            color_print(f"Calculated SCREEN_HEIGHT_CONSTANT: {SCREEN_HEIGHT_CONSTANT} and sending the multiplication.")
         return SCREEN_HEIGHT_CONSTANT * coord
 
     else:
@@ -98,7 +98,7 @@ def get_project_root(marker="main"):
     # caches the result for future calls.
     global _cached_root
     # noinspection PyUnreachableCode
-    # STUPID PYCHARM this is accessible SCREW YOU JETBRAINS!!!
+    # STOOPED PYCHARM this is accessible SCREW YOU JETBRAINS!!!
     if _cached_root:
         return _cached_root
 
