@@ -73,13 +73,13 @@ def resolution_converter(coord, axis):
     if axis == 'x':
         if not SCREEN_WIDTH_CONSTANT:  # if not done before, cache the screen width constant for faster access
             SCREEN_WIDTH_CONSTANT = SCREEN_WIDTH / REFERENCE_SCREEN_WIDTH
-            color_print(f"Calculated SCREEN_WIDTH_CONSTANT: {SCREEN_WIDTH_CONSTANT} and sending the multiplication.")
+            color_print(f"Calculated SCREEN_WIDTH_CONSTANT: {SCREEN_WIDTH_CONSTANT}.")
         return SCREEN_WIDTH_CONSTANT * coord
 
     if axis == 'y':
         if not SCREEN_HEIGHT_CONSTANT:  # if not done before, cache the screen height constant for faster access
             SCREEN_HEIGHT_CONSTANT = SCREEN_HEIGHT / REFERENCE_SCREEN_HEIGHT
-            color_print(f"Calculated SCREEN_HEIGHT_CONSTANT: {SCREEN_HEIGHT_CONSTANT} and sending the multiplication.")
+            color_print(f"Calculated SCREEN_HEIGHT_CONSTANT: {SCREEN_HEIGHT_CONSTANT}.")
         return SCREEN_HEIGHT_CONSTANT * coord
 
     else:

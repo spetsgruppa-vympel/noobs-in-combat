@@ -9,6 +9,10 @@ class MenuManager:
 
     def __init__(self, screen, screen_width, screen_height, theme=None):
         # store display surface and dimensions
+        self.current_menu = None
+        self.menu_stack = []
+        self.singleplayer_main_spec = None
+        self.menu_spec = None
         self.theme = theme
         self.screen = screen
         self.screen_width = screen_width
@@ -88,8 +92,6 @@ class MenuManager:
             self._background = pygame.transform.smoothscale(small, (self.screen_width, self.screen_height))
             self.color_print("Background scaled and blurred", "IMPORTANT")
         return self._background
-
-
 
     # ---------------------------
     # BACKWARD-COMPATIBLE ACCESSORS
@@ -258,6 +260,21 @@ class MenuManager:
         # return the created root so caller may keep it if desired
         return root_element
 
+
+    # LOAD MENU AND ALLOW FOR BACK BUTTON TO WORK
+    def load_menu(self, spec):
+        # clear current UI before pushing new one
+        if self.current_menu:
+            self.clear_element("all")
+
+        # create new menu root
+        root = self.create_from_spec(spec)
+
+        # push spec + root for back navigation
+        self.menu_stack.append((spec))
+        self.current_menu = root
+        return root
+
     # ---------------------------
     # DRAWING
     # ---------------------------
@@ -297,27 +314,11 @@ class MenuManager:
             self.element_callbacks.clear()
 
     # ---------------------------
-    # CALLBACKS
-    # ---------------------------
-    def singleplayer_press(self):
-        # placeholder: keep small and signal to game state manager
-        color_print("singleplayer button pressed", "IMPORTANT")
-        # TODO: implement transition to singleplayer
-
-    def multiplayer_press(self):
-        color_print("multiplayer button pressed", "IMPORTANT")
-        # TODO: implement multiplayer logic
-
-    def loadout_press(self):
-        color_print("loadout button pressed", "IMPORTANT")
-        # TODO: implement loadout screen
-
-    # ---------------------------
     # MAIN MENU CREATION (now spec-driven)
     # ---------------------------
     def create_main_menu(self):
         # compute panel geometry using resolution converters (keeps layout scalable)
-        panel_width = resolution_converter(400, 'x')
+        panel_width = resolution_converter(450, 'x')
         panel_height = resolution_converter(350, 'y')
         panel_x = (self.screen_width - panel_width) // 2
         panel_y = int(self.screen_height - panel_height) // 1.5
@@ -328,8 +329,25 @@ class MenuManager:
         button_x = (panel_width - button_width) // 2
         start_y = resolution_converter(40, 'y')
 
-        # build the spec dictionary describing the panel and its children
-        menu_spec = {
+        back_button_x = resolution_converter(10, 'x')
+        back_button_y = resolution_converter(40, 'y')
+
+        back_button_width = resolution_converter(60, 'x')
+        back_button_height = resolution_converter(60, 'y')
+
+        # build the menu spec dictionary describing the panel and its children
+
+        # back button def
+        def back_button_spec():
+            return {
+                "type": "button",
+                "id": "_back_btn",
+                "rect": [back_button_x, back_button_y, back_button_width, back_button_height],
+                "text": "Back",
+                "callback": "back_press"
+            }
+
+        self.menu_spec = {
             "type": "panel",
             "id": "menu_panel",
             "rect": [panel_x, panel_y, panel_width, panel_height],
@@ -355,12 +373,45 @@ class MenuManager:
                     "rect": [button_x, start_y + int(button_height * 2.2), button_width, button_height],
                     "text": "Loadout",
                     "callback": "loadout_press"
-                }
+                },
+
             ]
         }
 
+        # define spec for the singleplayer main menu
+        self.singleplayer_main_spec = {
+            "type": "panel",
+            "id": "singleplayer_main_spec",
+            "rect": [panel_x, panel_y, panel_width, panel_height],
+            "children": [
+                {
+                    "type": "button",
+                    "id": "_singleplayer_start_btn",
+                    "rect": [button_x, start_y, button_width, button_height],
+                    "text": "Start",
+                    "callback": ""
+                },
+                back_button_spec()
+            ]
+        }
+
+        # loadout_main_spec = {
+        #     "type": "panel",
+        #     "id": "loadout_main_spec",
+        #     "rect": [panel_x, panel_y, panel_width, panel_height],
+        #     "children": [
+        #         #
+        #         {
+        #             "type": "button",
+        #             "id": "_quit_dialog",
+        #             "rect": [panel_x, panel_y, panel_width, panel_height],
+        #             "text": "Quit"
+        #         }
+        #     ]
+        # }
+
         # create the UI tree from the spec and keep the returned root
-        root = self.create_from_spec(menu_spec)
+        root = self.load_menu(self.menu_spec)
 
         # convenience: keep attributes without the leading underscore for external code
         # if the spec used ids with leading underscores, the created attributes are set
@@ -376,6 +427,36 @@ class MenuManager:
             self._multiplayer_btn = getattr(self, '_multiplayer_btn')
         if hasattr(self, '_loadout_btn'):
             self._loadout_btn = getattr(self, '_loadout_btn')
+
+    # ---------------------------
+    # CALLBACKS
+    # ---------------------------
+    def singleplayer_press(self):
+        self.color_print("Singleplayer button pressed", "IMPORTANT")
+        self.load_menu(self.singleplayer_main_spec)
+        # TODO: implement singleplayer logic
+
+    def multiplayer_press(self):
+        color_print("Multiplayer button pressed", "IMPORTANT")
+        # TODO: implement multiplayer logic
+
+    def loadout_press(self):
+        color_print("Loadout button pressed", "IMPORTANT")
+        # TODO: implement loadout logic
+
+    def back_press(self):
+        color_print("Back button pressed", "IMPORTANT")
+        if len(self.menu_stack) > 1:
+            # pop current menu
+            self.clear_element("all")
+            self.menu_stack.pop()
+
+            # restore previous
+            spec = self.menu_stack[-1]
+            self.current_menu = self.create_from_spec(spec)
+            self.color_print("")
+        else:
+            self.color_print("No previous menu to go back to!", "WARNING")
 
     # ---------------------------
     # EVENT LOOP (simplified using mapping)
@@ -415,7 +496,7 @@ class MenuManager:
                 if event.type == pygame.QUIT:
                     # if quit dialog currently exists and user closed window
                     # noinspection PyUnreachableCode
-                    # SCREW YOU DUMB PYCHARM!!!!!! jetbrains more like NOBRAINS
+                    # SCREW YOU DUMB PYCHARM!!!!!! jetbrains more like NOBRAINS KILL URSELF PLZ
                     if self._quit_dialog:
                         print("quit")
                         return "quit"
