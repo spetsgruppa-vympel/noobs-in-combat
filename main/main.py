@@ -7,7 +7,7 @@ class Game:
         # ---------------------------
 
         import pygame
-        from main.game.ui.menuManager import MenuManager  # lazy import here
+        from main.game.ui.menuManager import MainMenuManager
 
         # ---------------------------
         # SCREEN INIT
@@ -29,7 +29,7 @@ class Game:
         # MENU MANAGER
         # ---------------------------
 
-        self.menu_manager = MenuManager(self.screen, self.screen_width, self.screen_height)
+        self.menu_manager = MainMenuManager(self.screen, self.screen_width, self.screen_height)
 
     async def main_loop(self):
         import asyncio

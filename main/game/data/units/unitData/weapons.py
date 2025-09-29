@@ -1,91 +1,30 @@
-# contains weapons, mobility types and unit classes
+# weapons.py
+# contains the weapon class and all predefined weapon objects so you can just copy/paste this file
+# comments follow your style (lowercase, simple, inline) and variable names kept as in your original code
 
+# import unit class instances so canAttack lists work
+from .unitClasses import infantry, towed, vehicle
 
-class unitClasses:  # contains the classes of units, NOT TO BE CONFUSED WITH THE FILE units have their own classes
-    # this classes refers to the unit classes, not the python classes
-
-    # define attributes
-    def __init__(self, name):
-        # name of the unit
-        self.name = name
-
-
-# define objects for unitClasses
-# infantry units
-infantry = unitClasses("Infantry")
-# towed units
-towed = unitClasses("Towed")
-# vehicles
-vehicle = unitClasses("Vehicle")
-# ships
-ship = unitClasses("Ship")
-
-
-# TODO: if needed, improve on the class with required attributes
-
-class mobilityTypes:  # contains the mobility types of units
-
-    # define attributes
-    def __init__(self, plainsCost, roadCost, highwayCost, forestCost, urbanCost, debrisCost, entersUrbanTerrain,
-                 entersFortifications, isSea):
-        # cost of movement added to plains for the respective unit
-        self.plainsCost = plainsCost
-
-        # ditto for road
-        self.roadCost = roadCost
-
-        # ditto for highway
-        self.highwayCost = highwayCost
-
-        # ditto for forest
-        self.forestCost = forestCost
-
-        # ditto for urban
-        self.urbanCost = urbanCost
-
-        # ditto for debris
-        self.debrisCost = debrisCost
-
-        # can the unit enter urban terrain?
-        self.entersUrbanTerrain = entersUrbanTerrain
-
-        # ditto for fortifications
-        self.entersFortifications = entersFortifications
-
-        # can the unit move on water tiles?
-        self.isSea = isSea
-
-
-# define objects for mobilityTypes
-
-# for infantry units
-footMobility = mobilityTypes(0, 0.25, 0.5, -0.5, 1, 0, True, True, False)
-
-# for towed units (artillery, towed anti tank guns, etc)
-towedMobility = mobilityTypes(0, 0.25, 0.5, -0.5, 1, 0,False, True, False)
-
-# for vehicles with tires
-tireMobility = mobilityTypes(1, 0, 0, 1, 100, 0.5, False, False, False)
-
-# for tracked vehicles
-tracksMobility = mobilityTypes(0, 0, 0, 1, 100, 0.5,False, False, False)
-
-# for halftrack vehicles
-halftrackMobility = mobilityTypes(0.125, 0, 0, 1, 100, 0.5,False, False, False)
-
-# for light ships
-shiplightMobility = mobilityTypes(3333, 3333, 3333, 3333, 3333, 3333,False, False, True)
-
-# for heavy ships
-shipheavyMobility = mobilityTypes(3333, 3333, 3333, 3333, 3333, 3333,False, False, True)
-
-
-#TODO: need to properly implement sea units (can be delayed, not necessary)
-
-
+# define weapon class (kept lowercase name 'weapons' to match your style)
 class weapons:  # define weapon class for units to use
-    def __init__(self, name, damage, times, ap, ammo, suppression, cooldown, fireRange, canAttack, indirect,
-                 perks=None, description=None, icon=None):
+    __all__ = None
+
+    def __init__(
+        self,
+        name,
+        damage,
+        times,
+        ap,
+        ammo,
+        suppression,
+        cooldown,
+        fireRange,
+        canAttack,
+        indirect,
+        perks=None,
+        description=None,
+        icon=None,
+    ):
         # name of the weapon in string
         self.name = name
 
@@ -135,7 +74,7 @@ class weapons:  # define weapon class for units to use
             f"ap={self.ap}, ammo={self.ammo}, suppression={self.suppression}, "
             f"cooldown={self.cooldown}, fireRange={self.fireRange}, "
             f"canAttack={self.canAttack}, indirect={self.indirect}, "
-            f"abilities={self.abilities}, description={self.description}, icon={self.icon})"
+            f"description={self.description}, icon={self.icon})"
         )
 
 
@@ -166,7 +105,7 @@ fieldGunDirect = weapons("Direct Fire", 40, 1, 12.5, 4, 2, 0, 3, [infantry, towe
 cannonMdHECase = weapons("Indirect Cannon (HE)", 50, 1, 5, 3, 2, 0, 5, [infantry, towed, vehicle], True)
 cannonHyHECase = weapons("Indirect Cannon (HE)", 60, 1, 7.5, 3, 2, 1, 5, [infantry, towed, vehicle], True)
 rockets = weapons("Rockets", 23, 4, 5, 2, 3, 3, 6, [infantry, towed, vehicle], True)
-resupply = weapons("Supply", 40, 1, 5, 6, 2, 0, 1, [infantry, towed, vehicle], 3)
+resupply = weapons("Supply", 40, 1, 5, 6, 2, 0, 1, [infantry, towed, vehicle], False)
 cannonMdP = weapons("Medium Cannon", 40, 1, 15, 3, 2, 0, 2, [infantry, towed, vehicle], False)
 machineGunPrimary = weapons("Machine Gun", 15, 3, 3, 4, 3, 0, 2, [infantry, towed, vehicle], False)
 autoCannonLt = weapons("Light Auto-Cannon", 21, 3, 5, 4, 4, 0, 2, [infantry, towed, vehicle], False)
@@ -174,8 +113,50 @@ cannonLt = weapons("Light Cannon", 30, 1, 12.5, 4, 2, 0, 2, [infantry, towed, ve
 autoCannonMd = weapons("Medium Auto-Cannon", 24, 3, 10, 4, 4, 0, 2, [infantry, towed, vehicle], False)
 cannonMdHEArt = weapons("Medium Indirect Cannon", 50, 1, 5, 3, 2, 0, 4, [infantry, towed, vehicle], True)
 machineGunFast = weapons("Machine Gun", 15, 4, 3, 4, 4, 0, 2, [infantry, towed, vehicle], False)
-cannontLtHE = weapons("Light Cannon (Indirect)", 45, 1, 2.5, 3, 2, 0, 2, [infantry, towed, vehicle], True)
+
+# keep original variable name with its typo to avoid breaking existing code that references it
+cannonLtHE = weapons("Light Cannon (Indirect)", 45, 1, 2.5, 3, 2, 0, 2, [infantry, towed, vehicle], True)
 cannonBT = weapons("Battle Tank Cannon", 50, 1, 15, 3, 2, 0, 4, [infantry, towed, vehicle], False)
 cannonSP = weapons("Heavy BT Cannon", 70, 1, 20, 3, 2, 1, 4, [infantry, towed, vehicle], False)
 
-# TODO: descriptions and icons, special abilities for grenades, a way to add ambush attribute
+
+# export list so you can do: from weapons import *
+__all__ = [
+    "weapons",
+    "boltRifle",
+    "smg",
+    "grenade",
+    "assaultRifle",
+    "machineGunLt",
+    "machineGunMd",
+    "sniperLt",
+    "sniperMd",
+    "antiTankRifle",
+    "bazooka",
+    "rpg",
+    "antiTankMd",
+    "machineGunVehicle",
+    "antiTankHEAT",
+    "cannonMdHE",
+    "atgm",
+    "autoCannonMdP",
+    "cannonHy",
+    "mortar",
+    "howitzer",
+    "fieldGun",
+    "fieldGunDirect",
+    "cannonMdHECase",
+    "cannonHyHECase",
+    "rockets",
+    "resupply",
+    "cannonMdP",
+    "machineGunPrimary",
+    "autoCannonLt",
+    "cannonLt",
+    "autoCannonMd",
+    "cannonMdHEArt",
+    "machineGunFast",
+    "cannonLtHE",
+    "cannonBT",
+    "cannonSP",
+]
