@@ -4,7 +4,6 @@
 
 class mobilityTypes:  # contains the mobility types of units
     # define attributes
-    __all__ = None
 
     def __init__(
         self,
@@ -70,14 +69,4 @@ shiplightMobility = mobilityTypes(3333, 3333, 3333, 3333, 3333, 3333, False, Fal
 shipheavyMobility = mobilityTypes(3333, 3333, 3333, 3333, 3333, 3333, False, False, True)
 
 # export so you can do: from mobility_types import *
-__all__ = [
-    "mobilityTypes",
-    "footMobility",
-    "towedMobility",
-    "tireMobility",
-    "tracksMobility",
-    "halftrackMobility",
-    "shiplightMobility",
-    "shipheavyMobility",
-]
 

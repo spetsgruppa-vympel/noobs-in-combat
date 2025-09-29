@@ -59,7 +59,7 @@ def defineUnits():
     from .unitData.unitClasses import infantry, towed, vehicle
     from .perks import perks, radio, fuel, healing, transport, capture, multi_attack, suppressor, headshot
 
-    # Define units and push them into the module’s global namespace
+    # define units and push them into the module’s global namespace
     g = globals()  # shorthand
 
     # Recon Tank

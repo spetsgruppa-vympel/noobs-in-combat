@@ -1,13 +1,10 @@
 # weapons.py
-# contains the weapon class and all predefined weapon objects so you can just copy/paste this file
-# comments follow your style (lowercase, simple, inline) and variable names kept as in your original code
 
 # import unit class instances so canAttack lists work
 from .unitClasses import infantry, towed, vehicle
 
 # define weapon class (kept lowercase name 'weapons' to match your style)
 class weapons:  # define weapon class for units to use
-    __all__ = None
 
     def __init__(
         self,
@@ -113,50 +110,7 @@ cannonLt = weapons("Light Cannon", 30, 1, 12.5, 4, 2, 0, 2, [infantry, towed, ve
 autoCannonMd = weapons("Medium Auto-Cannon", 24, 3, 10, 4, 4, 0, 2, [infantry, towed, vehicle], False)
 cannonMdHEArt = weapons("Medium Indirect Cannon", 50, 1, 5, 3, 2, 0, 4, [infantry, towed, vehicle], True)
 machineGunFast = weapons("Machine Gun", 15, 4, 3, 4, 4, 0, 2, [infantry, towed, vehicle], False)
-
-# keep original variable name with its typo to avoid breaking existing code that references it
 cannonLtHE = weapons("Light Cannon (Indirect)", 45, 1, 2.5, 3, 2, 0, 2, [infantry, towed, vehicle], True)
 cannonBT = weapons("Battle Tank Cannon", 50, 1, 15, 3, 2, 0, 4, [infantry, towed, vehicle], False)
 cannonSP = weapons("Heavy BT Cannon", 70, 1, 20, 3, 2, 1, 4, [infantry, towed, vehicle], False)
 
-
-# export list so you can do: from weapons import *
-__all__ = [
-    "weapons",
-    "boltRifle",
-    "smg",
-    "grenade",
-    "assaultRifle",
-    "machineGunLt",
-    "machineGunMd",
-    "sniperLt",
-    "sniperMd",
-    "antiTankRifle",
-    "bazooka",
-    "rpg",
-    "antiTankMd",
-    "machineGunVehicle",
-    "antiTankHEAT",
-    "cannonMdHE",
-    "atgm",
-    "autoCannonMdP",
-    "cannonHy",
-    "mortar",
-    "howitzer",
-    "fieldGun",
-    "fieldGunDirect",
-    "cannonMdHECase",
-    "cannonHyHECase",
-    "rockets",
-    "resupply",
-    "cannonMdP",
-    "machineGunPrimary",
-    "autoCannonLt",
-    "cannonLt",
-    "autoCannonMd",
-    "cannonMdHEArt",
-    "machineGunFast",
-    "cannonLtHE",
-    "cannonBT",
-    "cannonSP",
-]

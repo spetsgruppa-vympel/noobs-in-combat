@@ -56,11 +56,8 @@ class MainMenuManager:  # manages GUI while not ingame
         # element instance -> callback mapping for fast event dispatch
         self.element_callbacks = {}
 
-        # --- load unit definitions from your units module so the loadout UI can show them ---
-        import main.game.data.units.units
 
-        # create the UI using a data-driven spec approach
-        # original behavior preserved: create_main_menu will build a spec and call create_from_spec
+        # create the UI
         self.create_main_menu()
         self.color_print("Main menu created (spec)", "IMPORTANT")
 
@@ -128,7 +125,6 @@ class MainMenuManager:  # manages GUI while not ingame
         import pygame_gui.windows as windows
         from .UItheme import UITheme
 
-        # helper: safely apply colour mapping to element (defensive for different pygame_gui versions)
         def _safe_apply_colours(elem, mapping):
             if elem is None:
                 return
@@ -144,7 +140,7 @@ class MainMenuManager:  # manages GUI while not ingame
                 except Exception:
                     pass
             # fallback: set a couple of common attribute names if present
-            # (these won't cover all widgets but they avoid throwing AttributeError)
+            # (these won't cover all widgets but they avoid throwing AttributeError :shrug:)
             try:
                 if "normal_bg" in mapping and hasattr(elem, "background_colour"):
                     elem.background_colour = mapping["normal_bg"]
@@ -171,7 +167,7 @@ class MainMenuManager:  # manages GUI while not ingame
 
         ui_class = element_map[element_type]
 
-        # handle confirmation dialogs differently (their API expects rect & manager etc.)
+        # handle confirmation dialogs
         if element_type == "confirmation_dialog":
             element = ui_class(
                 rect=rect,
@@ -691,7 +687,7 @@ class MainMenuManager:  # manages GUI while not ingame
         self.refresh_loadout_view()
 
     # ---------------------------
-    # EVENT LOOP (simplified using mapping)
+    # EVENT LOOP
     # ---------------------------
     def process_events(self, events):
         # compute actual sizes
@@ -736,6 +732,7 @@ class MainMenuManager:  # manages GUI while not ingame
                 if event.type == pygame.QUIT:
                     # if quit dialog currently exists and user closed window
                     if self._quit_dialog:
+                        # screw you pycharm this code is accessible
                         return "quit"
 
                 # only show quit dialog on ESC (ignore other keys)
