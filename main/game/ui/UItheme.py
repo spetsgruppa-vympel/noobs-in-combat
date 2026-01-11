@@ -71,6 +71,41 @@ class UITheme:
     DISABLED = pygame.Color("#2A2A2A")
 
     # ========================================================================
+    # TILE HOVER EFFECTS
+    # ========================================================================
+
+    # Darkening factor for tile hover effect (0.0 = black, 1.0 = no change)
+    TILE_HOVER_DARKEN_FACTOR = 0.6
+
+    @staticmethod
+    def darken_color(color, factor=0.6):
+        """
+        Darken a color by a specified factor.
+
+        Multiplies each RGB component by the factor to create a darker shade.
+        Used for tile hover effects in the map visualization.
+
+        Args:
+            color: pygame.Color or tuple (r, g, b) to darken
+            factor: Float between 0.0 (black) and 1.0 (original color)
+
+        Returns:
+            pygame.Color object with darkened RGB values
+
+        Example:
+            >>> dark_green = UITheme.darken_color((0, 255, 0), 0.5)
+            >>> # Returns Color(0, 127, 0)
+        """
+        if isinstance(color, tuple):
+            color = pygame.Color(*color)
+
+        r = int(color.r * factor)
+        g = int(color.g * factor)
+        b = int(color.b * factor)
+
+        return pygame.Color(r, g, b)
+
+    # ========================================================================
     # TYPOGRAPHY
     # ========================================================================
 
@@ -98,6 +133,13 @@ class UITheme:
         "bold": True
     }
 
+    # Tile label font (small, bold) - for terrain type labels on hover
+    FONT_TILE_LABEL = {
+        "name": "Arial",
+        "size": 12,
+        "bold": True
+    }
+
     # ========================================================================
     # DIMENSIONS AND SPACING
     # ========================================================================
@@ -109,24 +151,3 @@ class UITheme:
     # Set to 0 for sharp corners, increase for more rounded appearance
     RADIUS = 5  # pixels
 
-    # ========================================================================
-    # USAGE EXAMPLES
-    # ========================================================================
-    """
-    # Creating a styled button
-    button_rect = pygame.Rect(100, 100, 200, 50)
-    pygame.draw.rect(screen, UITheme.PRIMARY, button_rect)
-    pygame.draw.rect(screen, UITheme.SECONDARY, button_rect, UITheme.BORDER_WIDTH)
-    
-    # Hover effect
-    if button_hovered:
-        pygame.draw.rect(screen, UITheme.HOVER, button_rect)
-    
-    # Active/selected state
-    if button_selected:
-        pygame.draw.rect(screen, UITheme.HIGHLIGHT, button_rect)
-    
-    # Disabled state
-    if button_disabled:
-        pygame.draw.rect(screen, UITheme.DISABLED, button_rect)
-    """

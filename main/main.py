@@ -9,6 +9,7 @@ and gameplay systems.
 import asyncio
 import pygame
 from main.config import get_logger, get_project_root, setup_logging
+from main.game.ui.camera import Camera
 
 
 class Game:
@@ -77,8 +78,10 @@ class Game:
         frame_count = 0
         target_fps = 60
 
+
+        camera = Camera(screen_width=self.screen_width, screen_height=self.screen_height)
+
         while self.running:
-            # Calculate delta time for frame-independent movement
             dt = self.clock.tick(target_fps) / 1000.0
             frame_count += 1
 
@@ -90,48 +93,70 @@ class Game:
                     f"Delta: {dt:.4f}s, State: {self.game_state}"
                 )
 
-            # Collect all pygame events
             events = pygame.event.get()
 
-            # Log significant user events
+            # Log key events
             for event in events:
                 if event.type == pygame.QUIT:
                     self.logger.info("Quit event received from window")
+                    self.running = False
                 elif event.type == pygame.KEYDOWN:
                     key_name = pygame.key.name(event.key)
                     self.logger.debug(f"Key pressed: {key_name}")
 
-            # Process events based on current game state
+            # ===== GAME STATE CONTROL ===== #
             if self.game_state == "menu":
                 result = self.menu_manager.process_events(events)
                 if result == "quit":
-                    self.logger.info("Quit action confirmed by user")
                     self.running = False
                 elif result == "start_game":
-                    self.logger.info("Transitioning from menu to gameplay")
                     self.game_state = "playing"
-                    # TODO: Initialize gameplay systems
 
-                # Update menu UI elements
                 self.menu_manager.manager.update(dt)
-
-                # Render menu
                 self.menu_manager.draw()
 
             elif self.game_state == "playing":
-                # TODO: Handle gameplay event processing
-                # TODO: Update game systems (units, AI, etc.)
-                # TODO: Render game world
-                pass
+
+                # --------- CAMERA INPUT HANDLING --------- #
+
+                keys = pygame.key.get_pressed()
+                pan_speed = 300 * dt  # world units per second
+
+                # WASD panning
+                if keys[pygame.K_w]: camera.pan(0, -pan_speed)
+                if keys[pygame.K_s]: camera.pan(0, pan_speed)
+                if keys[pygame.K_a]: camera.pan(-pan_speed, 0)
+                if keys[pygame.K_d]: camera.pan(pan_speed, 0)
+
+                # Mouse wheel zooming
+                for event in events:
+                    if event.type == pygame.MOUSEWHEEL:
+                        if event.y > 0:
+                            camera.zoom_in()
+                        else:
+                            camera.zoom_out()
+
+                # Smooth camera updates (follow / smooth pan)
+                camera.update(dt)
+
+                # --------- GAMEPLAY UPDATE --------- #
+                # TODO: update units, AI, world, etc.
+
+                # --------- GAMEPLAY RENDER --------- #
+                self.screen.fill((0, 0, 0))  # clear screen
+
+                # Example rendering of a test point at world (0,0)
+                sx, sy = camera.world_to_screen(0, 0)
+                pygame.draw.circle(self.screen, (255, 255, 0), (int(sx), int(sy)), 8)
+
+                # Debug: viewport bounds
+                # vx_min, vy_min, vx_max, vy_max = camera.get_viewport_bounds()
 
             elif self.game_state == "paused":
-                # TODO: Handle pause menu
+                # TODO: pause menu handling
                 pass
 
-            # Flip display buffers
             pygame.display.flip()
-
-            # Yield control to allow other async operations
             await asyncio.sleep(0)
 
         self.logger.info(f"Main loop exited after {frame_count} frames")
