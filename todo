@@ -1,8 +1,588 @@
-set up classes for everything needed
-sea units
-icons and descriptions for everything
-main event loop
+# Snakes in Combat - Development TODO
 
----------------------------------------
+> A turn-based strategy game inspired by Noobs in Combat (Roblox) and Advance Wars
 
-loadout making ability
+## Current Status: Pre-Alpha
+**Core Systems:** Map generation, UI framework, unit definitions  
+**Missing:** Gameplay loop, combat system, AI, most game mechanics
+
+---
+
+## 🎯 CRITICAL PATH - Core Gameplay Loop
+
+### Phase 1: Basic Gameplay Foundation
+**Goal:** Get a minimal playable game with one unit moving on a map
+
+- [ ] **Game State Management** (`main/game/ui/gameState.py`)
+  - [ ] Create GameState class tracking:
+    - Current turn number
+    - Active player (Player 1, Player 2, AI)
+    - Game phase (deployment, movement, combat, end turn)
+    - Win/loss conditions
+    - Player resources (tickets/money)
+  - [ ] Implement turn system
+  - [ ] Add state serialization (save/load)
+
+- [ ] **Camera System** (`main/game/ui/camera.py`)
+  - [ ] Implement camera class with:
+    - Pan (WASD or arrow keys)
+    - Zoom (mouse wheel)
+    - Screen-to-world coordinate conversion
+    - World-to-screen coordinate conversion
+  - [ ] Add camera bounds (don't scroll past map edges)
+  - [ ] Smooth camera movement (lerp/ease)
+  - [ ] Center camera on selected unit
+
+- [ ] **Map Rendering** (NEW: `main/game/ui/mapRenderer.py`)
+  - [ ] Render terrain tiles with textures/colors
+  - [ ] Draw grid overlay
+  - [ ] Highlight tile under mouse cursor
+  - [ ] Show movement range overlay (blue tiles)
+  - [ ] Show attack range overlay (red tiles)
+  - [ ] Display fog of war (unexplored areas)
+
+- [ ] **Unit Spawning System**
+  - [ ] Place units on map from loadout
+  - [ ] Spawn point selection UI
+  - [ ] Validate spawn positions (not occupied, correct team)
+  - [ ] Deploy units from loadout at game start
+  - [ ] Display units on map with sprites/icons
+
+- [ ] **Unit Selection & Movement** (`main/game/core/mechanics/movement.py`)
+  - [ ] Click to select unit
+  - [ ] Show selected unit info panel (HP, weapons, stats)
+  - [ ] Calculate valid movement tiles (pathfinding)
+  - [ ] Display movement range overlay
+  - [ ] Click destination to move unit
+  - [ ] Animate unit movement
+  - [ ] Update tile occupation status
+  - [ ] Consume movement points
+
+---
+
+## 🎮 Phase 2: Combat System
+**Goal:** Units can attack and damage each other
+
+### Combat Mechanics (`main/game/core/mechanics/combat/`)
+
+- [ ] **Basic Combat** (`combat.py`)
+  - [ ] Attack initiation (select target in range)
+  - [ ] Line of sight calculation
+  - [ ] Range checking
+  - [ ] Damage calculation formula:
+    - Base damage × hits
+    - Apply armor penetration
+    - Subtract target armor
+    - Apply terrain defense bonuses
+    - Apply percentage modifiers
+  - [ ] HP reduction
+  - [ ] Unit death/removal
+  - [ ] Combat animation/feedback
+
+- [ ] **Advanced Combat** (`advancedCombat.py`)
+  - [ ] Counter-attack system (like Advance Wars)
+  - [ ] First strike calculation
+  - [ ] Damage prediction display (before attacking)
+  - [ ] Critical hits system
+  - [ ] Overkill damage (damage beyond 0 HP)
+
+- [ ] **Suppression System** (`suppression.py`)
+  - [ ] Suppression points accumulation
+  - [ ] Effects of suppression:
+    - Reduced accuracy
+    - Reduced movement
+    - Panic/retreat behavior
+  - [ ] Suppression recovery over turns
+  - [ ] Visual indicators
+
+- [ ] **Special Mechanics (from NIC)**
+  - [ ] **Pinned Down** (`main/game/core/mechanics/gameMechanics/pinnedDown.py`)
+    - [ ] Units under heavy fire cannot move
+    - [ ] Threshold calculation
+    - [ ] Duration and recovery
+    
+  - [ ] **Mobility Kill** (`main/game/core/mechanics/gameMechanics/mobilityKill.py`)
+    - [ ] Damage vehicle movement without destroying
+    - [ ] Immobilized vehicle mechanics
+    - [ ] Repair system
+    
+  - [ ] **Capture System** (`main/game/core/mechanics/gameMechanics/capture.py`)
+    - [ ] Infantry capture buildings
+    - [ ] Capture progress (HP-based)
+    - [ ] Capture interruption (if damaged)
+    - [ ] Building ownership change
+    - [ ] Capture points contributing to victory
+
+---
+
+## 🏗️ Phase 3: Buildings & Map Features
+
+### Building System (`main/game/data/buildings/buildings.py`)
+
+- [ ] **Building Types** (from Noobs in Combat)
+  - [ ] **Headquarters (HQ)**
+    - Losing it = game over
+    - Income bonus
+    - Spawn point
+    
+  - [ ] **Factory**
+    - Produces ground units
+    - Unit queue system
+    - Production costs
+    
+  - [ ] **Airport**
+    - Produces air units (future)
+    - Repair capabilities
+    
+  - [ ] **Port**
+    - Produces naval units (future)
+    - Repair capabilities
+    
+  - [ ] **City**
+    - Income generation
+    - Capture points
+    - Minor healing
+    
+  - [ ] **Tower**
+    - Vision range
+    - Cannot be captured
+    - Defensive structure
+
+- [ ] **Building Mechanics**
+  - [ ] HP system
+  - [ ] Capture progress tracking
+  - [ ] Income generation per turn
+  - [ ] Unit production queue
+  - [ ] Repair functionality
+  - [ ] Building destruction
+  - [ ] Building sprites/rendering
+
+- [ ] **Map Features**
+  - [ ] Rivers/water tiles
+  - [ ] Bridges (cross rivers)
+  - [ ] Destructible obstacles
+  - [ ] Elevation system (future)
+
+---
+
+## 🤖 Phase 4: AI System
+
+### Enemy AI (`main/game/core/mechanics/enemy/ai/ai.py`)
+
+- [ ] **Basic AI**
+  - [ ] Threat assessment
+  - [ ] Target selection
+  - [ ] Movement toward objectives
+  - [ ] Attack when in range
+  - [ ] Retreat when low HP
+  - [ ] Building capture logic
+
+- [ ] **Advanced AI**
+  - [ ] Unit value calculations
+  - [ ] Tactical positioning (terrain usage)
+  - [ ] Coordinated attacks
+  - [ ] Unit type advantages (rock-paper-scissors)
+  - [ ] Economic management
+  - [ ] Production priorities
+  - [ ] Defensive formations
+
+- [ ] **Difficulty Levels**
+  - [ ] Easy (passive, mistakes)
+  - [ ] Medium (competent)
+  - [ ] Hard (aggressive, optimal)
+  - [ ] Expert (cheats/bonuses?)
+
+---
+
+## 🌐 Phase 5: Multiplayer (Long-term)
+
+### Network System (`main/game/core/mechanics/enemy/multiplayer/multiplayer.py`)
+
+- [ ] **Architecture Decision**
+  - [ ] Research: Peer-to-peer vs client-server
+  - [ ] Choose networking library (sockets, asyncio, websockets?)
+  - [ ] Design network protocol
+
+- [ ] **Core Multiplayer**
+  - [ ] Lobby system
+  - [ ] Player matchmaking
+  - [ ] Turn synchronization
+  - [ ] Network lag handling
+  - [ ] Disconnect/reconnect handling
+  - [ ] Spectator mode
+
+- [ ] **Multiplayer Modes**
+  - [ ] 1v1 competitive
+  - [ ] 2v2 team battles
+  - [ ] Free-for-all (3-4 players)
+  - [ ] Co-op vs AI
+
+---
+
+## 🎨 Phase 6: Assets & Polish
+
+### Visual Assets (`assets/`)
+
+- [ ] **Unit Sprites** (`assets/units/`)
+  - [ ] Infantry units (12 different types)
+  - [ ] Vehicle units (8 different types)
+  - [ ] Animations (idle, move, attack, death)
+  - [ ] Team color variations
+
+- [ ] **Terrain Textures** (`assets/maps/`)
+  - [ ] Plains tiles
+  - [ ] Forest tiles
+  - [ ] Urban tiles
+  - [ ] Mountain tiles
+  - [ ] Road/highway tiles
+  - [ ] Debris tiles
+  - [ ] Water tiles (future)
+  - [ ] Tile transitions (smooth edges)
+
+- [ ] **Building Sprites** (`assets/buildings/`)
+  - [ ] HQ (both teams)
+  - [ ] Factory
+  - [ ] City
+  - [ ] Tower
+  - [ ] Airports/ports (future)
+  - [ ] Capture progress indicator
+  - [ ] Damage states
+
+- [ ] **UI Elements** (`assets/ui/`)
+  - [ ] Unit info panel background
+  - [ ] Health bars
+  - [ ] Ammo indicators
+  - [ ] Status effect icons
+  - [ ] Button sprites
+  - [ ] Cursor variations
+  - [ ] Team flags/emblems
+
+- [ ] **Icons** (all units, buildings, perks)
+  - [ ] 64x64 icons for all units
+  - [ ] Weapon icons
+  - [ ] Perk icons
+  - [ ] Status effect icons
+
+### Sound & Music (`assets/audio/` - NEW)
+
+- [ ] **Sound Effects**
+  - [ ] Unit selection click
+  - [ ] Movement sounds
+  - [ ] Weapon fire sounds (varied by weapon type)
+  - [ ] Explosion sounds
+  - [ ] Building capture sound
+  - [ ] UI click/hover sounds
+  - [ ] Victory/defeat sounds
+
+- [ ] **Music**
+  - [ ] Main menu theme
+  - [ ] In-game battle music (multiple tracks)
+  - [ ] Victory theme
+  - [ ] Defeat theme
+
+---
+
+## 📊 Phase 7: Game Balance & Content
+
+### Complete Unit Roster
+
+- [ ] **Finish Incomplete Units** (`main/game/data/units/units.py`)
+  - [ ] Recon Car (currently stubbed)
+  - [ ] Mortar (currently stubbed)
+  - [ ] Add all missing units from NIC
+
+- [ ] **New Unit Types**
+  - [ ] Anti-Air units
+  - [ ] Artillery variants
+  - [ ] Engineer units (repair/build)
+  - [ ] Commander units (buffs nearby units)
+  - [ ] Special forces (stealth units)
+
+- [ ] **Naval Units** (future expansion)
+  - [ ] Battleship
+  - [ ] Destroyer
+  - [ ] Submarine
+  - [ ] Aircraft carrier
+  - [ ] Landing craft
+
+- [ ] **Air Units** (future expansion)
+  - [ ] Fighter aircraft
+  - [ ] Bomber aircraft
+  - [ ] Helicopter
+  - [ ] Transport aircraft
+
+### Perk Implementation
+
+- [ ] **Missing Perks** (`main/game/data/units/perks.py`)
+  - [ ] Cloaked (stealth system)
+  - [ ] Napalm (area damage over time)
+  - [ ] Complete descriptions for all perks
+  - [ ] Design icons for all perks
+
+- [ ] **Perk System Integration**
+  - [ ] Perk effect handler
+  - [ ] Condition checking
+  - [ ] Duration tracking
+  - [ ] Stacking rules
+  - [ ] Visual indicators
+
+### Balance Testing
+
+- [ ] **Unit Balance**
+  - [ ] Cost vs effectiveness analysis
+  - [ ] Rock-paper-scissors counters
+  - [ ] Weapon effectiveness vs armor
+  - [ ] Movement range balance
+  - [ ] Vision range balance
+
+- [ ] **Economic Balance**
+  - [ ] Starting tickets/money
+  - [ ] Income rates
+  - [ ] Building capture rewards
+  - [ ] Unit production costs
+  - [ ] Resupply costs
+
+- [ ] **Map Balance**
+  - [ ] Starting position fairness
+  - [ ] Building distribution
+  - [ ] Terrain variety
+  - [ ] Strategic chokepoints
+
+---
+
+## 🎯 Phase 8: Game Modes & Features
+
+### Single Player Modes
+
+- [ ] **Campaign Mode**
+  - [ ] Mission structure
+  - [ ] Story/context
+  - [ ] Progressive difficulty
+  - [ ] Mission objectives (not just "kill all")
+  - [ ] Unlockable units
+  - [ ] Persistent progression
+
+- [ ] **Skirmish Mode**
+  - [ ] Play vs AI on any map
+  - [ ] Difficulty selection
+  - [ ] Team size options
+  - [ ] Victory condition options
+
+- [ ] **Tutorial**
+  - [ ] Basic movement tutorial
+  - [ ] Combat tutorial
+  - [ ] Building capture tutorial
+  - [ ] Advanced tactics tutorial
+
+### Quality of Life Features
+
+- [ ] **Gameplay**
+  - [ ] Unit grouping/selection
+  - [ ] Attack-move command
+  - [ ] Waypoint system
+  - [ ] Auto-end turn when done
+  - [ ] Undo move (before attacking)
+  - [ ] Fast-forward animations option
+  - [ ] Skip AI turn animation
+
+- [ ] **UI/UX**
+  - [ ] Minimap
+  - [ ] Unit list panel
+  - [ ] Building list panel
+  - [ ] Turn timer (multiplayer)
+  - [ ] Match history/replay
+  - [ ] Hotkey customization
+  - [ ] Tooltips for everything
+
+- [ ] **Accessibility**
+  - [ ] Colorblind modes
+  - [ ] Screen reader support
+  - [ ] Adjustable text size
+  - [ ] Alternative control schemes
+  - [ ] Remappable controls
+
+---
+
+## 🛠️ Phase 9: Technical Improvements
+
+### Code Quality
+
+- [ ] **Testing**
+  - [ ] Unit tests for combat calculations
+  - [ ] Unit tests for movement system
+  - [ ] Unit tests for AI decisions
+  - [ ] Integration tests for game flow
+  - [ ] Performance benchmarks
+
+- [ ] **Optimization**
+  - [ ] Profile rendering performance
+  - [ ] Optimize pathfinding algorithm
+  - [ ] Cache frequently used calculations
+  - [ ] Sprite batching
+  - [ ] Reduce memory allocations
+
+- [ ] **Documentation**
+  - [ ] Complete API documentation
+  - [ ] Architecture diagrams
+  - [ ] Contribution guide
+  - [ ] Modding guide
+  - [ ] Video tutorials
+
+### Infrastructure
+
+- [ ] **Build System**
+  - [ ] One-click build script
+  - [ ] Asset packaging
+  - [ ] Executable creation (PyInstaller/cx_Freeze)
+  - [ ] Cross-platform builds (Windows, Mac, Linux)
+
+- [ ] **Version Control**
+  - [ ] Git LFS for large assets
+  - [ ] Automated backups
+  - [ ] Release tagging strategy
+  - [ ] Changelog generation
+
+- [ ] **Error Handling**
+  - [ ] Crash reporting
+  - [ ] Automatic log upload
+  - [ ] User-friendly error messages
+  - [ ] Recovery from corrupted saves
+
+---
+
+## 🚀 Phase 10: Release Preparation
+
+### Pre-Release
+
+- [ ] **Beta Testing**
+  - [ ] Internal testing
+  - [ ] Closed beta program
+  - [ ] Bug tracking system
+  - [ ] Feedback collection
+
+- [ ] **Performance**
+  - [ ] 60 FPS on target hardware
+  - [ ] Load time optimization
+  - [ ] Memory leak fixes
+  - [ ] CPU usage optimization
+
+- [ ] **Stability**
+  - [ ] No critical bugs
+  - [ ] No common crashes
+  - [ ] Save file integrity
+  - [ ] Network stability (if multiplayer)
+
+### Release
+
+- [ ] **Distribution**
+  - [ ] Steam page (if applicable)
+  - [ ] Itch.io page
+  - [ ] GitHub releases
+  - [ ] Website
+
+- [ ] **Marketing**
+  - [ ] Trailer video
+  - [ ] Screenshot gallery
+  - [ ] Press kit
+  - [ ] Social media presence
+  - [ ] Demo version
+
+- [ ] **Legal**
+  - [ ] License verification (Unlicense is fine)
+  - [ ] Asset licensing check
+  - [ ] Terms of service (if multiplayer)
+  - [ ] Privacy policy (if data collection)
+
+---
+
+## 🌟 Future Expansion Ideas
+
+### Post-Release Content
+
+- [ ] **New Factions**
+  - [ ] Different unit rosters
+  - [ ] Unique abilities
+  - [ ] Faction-specific buildings
+
+- [ ] **Map Editor**
+  - [ ] In-game map creation tool
+  - [ ] Custom map sharing
+  - [ ] Map rating system
+  - [ ] Workshop integration
+
+- [ ] **Modding Support**
+  - [ ] Custom unit creation
+  - [ ] Custom graphics
+  - [ ] Custom game modes
+  - [ ] Lua scripting (?)
+
+- [ ] **Seasonal Content**
+  - [ ] Holiday events
+  - [ ] Limited-time modes
+  - [ ] Cosmetic rewards
+
+---
+
+## 📋 Immediate Next Steps (Prioritized)
+
+1. **This Week:**
+   - [ ] Implement GameState class
+   - [ ] Create basic camera system
+   - [ ] Render map with colored tiles
+
+2. **Next Week:**
+   - [ ] Unit selection system
+   - [ ] Movement calculation (pathfinding)
+   - [ ] Move unit on map
+
+3. **Following Week:**
+   - [ ] Basic combat implementation
+   - [ ] Damage calculation
+   - [ ] Unit death
+
+4. **Month 1 Goal:**
+   - [ ] Playable demo: 2 units can move and fight on a map
+
+---
+
+## 🎓 Learning Resources Needed
+
+- [ ] Pathfinding algorithms (A*, Dijkstra)
+- [ ] Game AI techniques
+- [ ] Network programming (for multiplayer)
+- [ ] Sprite animation systems
+- [ ] Turn-based game architecture patterns
+- [ ] Save/load serialization best practices
+
+---
+
+## 📝 Notes & Design Decisions
+
+### From Noobs in Combat (Reference)
+- Turn-based tactical combat
+- Capture buildings for resources
+- Unit variety (infantry, vehicles, artillery)
+- Terrain affects movement and defense
+- Rock-paper-scissors unit counters
+- Team-based gameplay
+- Resource management (tickets)
+
+### Original Features for Snakes in Combat
+- Deeper tactical gameplay
+- More unit customization (loadouts)
+- Better AI
+- Cleaner UI/UX
+- More responsive controls
+- Better balance
+
+### Technical Constraints
+- Python + Pygame (good for 2D, not 3D)
+- Single-player focus initially
+- Turn-based (less demanding than real-time)
+- Grid-based movement (simplifies collision)
+
+---
+
+**Last Updated:** January 2026  
+**Version:** 0.1 Pre-Alpha  
+**Contributors:** Add your name when you complete a task!

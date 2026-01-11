@@ -52,28 +52,13 @@ Current Implementation: PHASE 1 + partial PHASE 2
 """
 
 import random
+import pygame
 from main.config import get_logger, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE
 from main.game.data.maps.terrain import plains, forest, urban, mountains, road, highway, debris
 from main.game.data.maps.tile import tile
 
 
 class MapConfig:
-    """
-    Configuration parameters for procedural map generation.
-
-    Attributes:
-        width: Map width in tiles
-        height: Map height in tiles
-        forest_density: Probability of forest tile (0.0-1.0)
-        urban_density: Probability of urban tile (0.0-1.0)
-        mountain_density: Probability of mountain tile (0.0-1.0)
-        road_density: Probability of road tile (0.0-1.0)
-        debris_density: Probability of debris tile (0.0-1.0)
-        seed: Random seed for reproducible generation (None for random)
-        smoothing_passes: Number of cellular automata smoothing iterations
-        min_cluster_size: Minimum contiguous tiles for terrain feature
-    """
-
     def __init__(
             self,
             width=MAP_WIDTH,
@@ -107,20 +92,7 @@ class MapConfig:
 
 
 class MapGenerator:
-    """
-    Procedural map generator using noise and cellular automata.
-
-    Generates tactical maps with varied terrain suitable for turn-based strategy gameplay.
-    Ensures balanced distribution of terrain types while maintaining natural-looking patterns.
-    """
-
     def __init__(self, config=None):
-        """
-        Initialize map generator with configuration.
-
-        Args:
-            config: MapConfig object, or None to use defaults
-        """
         self.config = config or MapConfig()
         self.logger = get_logger(__name__)
         self.grid = []
@@ -131,64 +103,38 @@ class MapGenerator:
 
         self.logger.info("MapGenerator initialized")
 
-    def generate(self):
-        """
-        Generate a complete map with all terrain types.
+    def generate(self, visualize=False):
+        self.logger.info(f"Starting map generation: {self.config.width}x{self.config.height}")
 
-        Returns:
-            2D list of tile objects representing the generated map
-        """
-        self.logger.info(
-            f"Starting map generation: {self.config.width}x{self.config.height}"
-        )
-
-        # Initialize with plains
         self._initialize_grid()
-
-        # Generate terrain layers in order of priority (bottom to top)
         self._generate_mountains()
         self._generate_forests()
         self._generate_urban_areas()
         self._generate_debris()
         self._generate_roads()
-
-        # Apply smoothing for natural appearance
         self._smooth_terrain()
 
-        # TODO: Validate map playability
-        # TODO: Add spawn points
-        # TODO: Add buildings
-
         self.logger.info("Map generation complete")
+
+        if visualize:
+            self.visualize_map_pygame()
+
         return self.grid
 
     def _initialize_grid(self):
-        """Initialize map grid with plains terrain."""
         self.logger.debug("Initializing grid with plains")
         self.grid = []
 
         for y in range(self.config.height):
             row = []
             for x in range(self.config.width):
-                t = tile(
-                    x=x,
-                    y=y,
-                    terrain_type=plains,
-                    size=TILE_SIZE,
-                    occupied=False
-                )
+                t = tile(x=x, y=y, terrain_type=plains, size=TILE_SIZE, occupied=False)
                 row.append(t)
             self.grid.append(row)
 
         self.logger.debug(f"Grid initialized: {len(self.grid)}x{len(self.grid[0])}")
 
     def _generate_mountains(self):
-        """
-        Generate mountain terrain using noise-based clusters.
-
-        Mountains block line of sight and provide defensive bonuses,
-        so they're placed to create natural chokepoints and barriers.
-        """
         self.logger.debug("Generating mountains")
         mountain_count = 0
 
@@ -201,21 +147,13 @@ class MapGenerator:
         self.logger.info(f"Placed {mountain_count} mountain tiles")
 
     def _generate_forests(self):
-        """
-        Generate forest terrain in clusters.
-
-        Forests provide cover and defensive bonuses while slowing movement.
-        Generated in clusters for natural appearance.
-        """
         self.logger.debug("Generating forests")
         forest_count = 0
 
         for y in range(self.config.height):
             for x in range(self.config.width):
-                # Skip if already mountain
                 if self.grid[y][x].terrain_type == mountains:
                     continue
-
                 if random.random() < self.config.forest_density:
                     self.grid[y][x].terrain_type = forest
                     forest_count += 1
@@ -223,21 +161,13 @@ class MapGenerator:
         self.logger.info(f"Placed {forest_count} forest tiles")
 
     def _generate_urban_areas(self):
-        """
-        Generate urban terrain representing cities and towns.
-
-        Urban areas provide strong defensive positions and may contain
-        capturable buildings. Placed in clustered patterns away from mountains.
-        """
         self.logger.debug("Generating urban areas")
         urban_count = 0
 
         for y in range(self.config.height):
             for x in range(self.config.width):
-                # Skip if already mountain or forest
                 if self.grid[y][x].terrain_type in [mountains, forest]:
                     continue
-
                 if random.random() < self.config.urban_density:
                     self.grid[y][x].terrain_type = urban
                     urban_count += 1
@@ -245,21 +175,13 @@ class MapGenerator:
         self.logger.info(f"Placed {urban_count} urban tiles")
 
     def _generate_debris(self):
-        """
-        Generate debris/rubble terrain for tactical variety.
-
-        Debris provides light cover and represents destroyed structures
-        or rough terrain. Scattered randomly across non-critical areas.
-        """
         self.logger.debug("Generating debris")
         debris_count = 0
 
         for y in range(self.config.height):
             for x in range(self.config.width):
-                # Only place on plains to avoid replacing important terrain
                 if self.grid[y][x].terrain_type != plains:
                     continue
-
                 if random.random() < self.config.debris_density:
                     self.grid[y][x].terrain_type = debris
                     debris_count += 1
@@ -267,23 +189,13 @@ class MapGenerator:
         self.logger.info(f"Placed {debris_count} debris tiles")
 
     def _generate_roads(self):
-        """
-        Generate road network for fast movement corridors.
-
-        Roads provide movement bonuses but reduce defensive capabilities.
-        Generated as connecting paths between important locations.
-        TODO: Implement pathfinding-based road generation
-        """
         self.logger.debug("Generating roads")
         road_count = 0
 
-        # Simple scatter implementation (will be improved in Phase 2)
         for y in range(self.config.height):
             for x in range(self.config.width):
-                # Only place on plains/debris
                 if self.grid[y][x].terrain_type not in [plains, debris]:
                     continue
-
                 if random.random() < self.config.road_density:
                     self.grid[y][x].terrain_type = road
                     road_count += 1
@@ -291,23 +203,16 @@ class MapGenerator:
         self.logger.info(f"Placed {road_count} road tiles")
 
     def _smooth_terrain(self):
-        """
-        Apply cellular automata smoothing for natural terrain transitions.
-
-        Reduces isolated single tiles and creates more cohesive terrain clusters,
-        making the map look more organic and realistic.
-        """
         self.logger.debug(f"Smoothing terrain ({self.config.smoothing_passes} passes)")
 
         for pass_num in range(self.config.smoothing_passes):
-            new_grid = [row[:] for row in self.grid]  # Deep copy
+            new_grid = [row[:] for row in self.grid]
 
             for y in range(1, self.config.height - 1):
                 for x in range(1, self.config.width - 1):
                     current_type = self.grid[y][x].terrain_type
-
-                    # Count neighbors of same type
                     same_neighbors = 0
+
                     for dy in [-1, 0, 1]:
                         for dx in [-1, 0, 1]:
                             if dx == 0 and dy == 0:
@@ -316,9 +221,7 @@ class MapGenerator:
                             if neighbor.terrain_type == current_type:
                                 same_neighbors += 1
 
-                    # If isolated (few neighbors), convert to most common neighbor type
                     if same_neighbors < 3 and current_type != plains:
-                        # Find most common neighbor type
                         neighbor_types = {}
                         for dy in [-1, 0, 1]:
                             for dx in [-1, 0, 1]:
@@ -335,77 +238,83 @@ class MapGenerator:
             self.logger.debug(f"Smoothing pass {pass_num + 1} complete")
 
     def get_terrain_statistics(self):
-        """
-        Calculate terrain distribution statistics for the generated map.
-
-        Returns:
-            Dict with terrain type names as keys and counts as values
-        """
         stats = {
-            "plains": 0,
-            "forest": 0,
-            "urban": 0,
-            "mountains": 0,
-            "road": 0,
-            "highway": 0,
-            "debris": 0
+            "plains": 0, "forest": 0, "urban": 0,
+            "mountains": 0, "road": 0,
+            "highway": 0, "debris": 0
         }
 
         for row in self.grid:
             for tile_obj in row:
-                terrain_name = tile_obj.terrain_type.name.lower()
-                if terrain_name in stats:
-                    stats[terrain_name] += 1
+                name = tile_obj.terrain_type.name.lower()
+                if name in stats:
+                    stats[name] += 1
 
         total = self.config.width * self.config.height
         self.logger.info(f"Terrain stats: {stats} (total: {total})")
-
         return stats
 
     def export_map_ascii(self):
-        """
-        Export map as ASCII art for debugging/preview.
-
-        Returns:
-            String representation of map using terrain symbols
-        """
-        terrain_symbols = {
-            plains: ".",
-            forest: "T",
-            urban: "#",
-            mountains: "^",
-            road: "=",
-            highway: "≡",
+        symbols = {
+            plains: ".", forest: "T", urban: "#",
+            mountains: "^", road: "=", highway: "≡",
             debris: "x"
         }
-
         lines = []
         for row in self.grid:
-            line = "".join(terrain_symbols.get(t.terrain_type, "?") for t in row)
-            lines.append(line)
-
+            lines.append("".join(symbols.get(t.terrain_type, "?") for t in row))
         return "\n".join(lines)
+
+    def visualize_map_pygame(self):
+        if pygame is None:
+            print("Pygame not installed. Run `pip install pygame` to enable visualization.")
+            return
+
+        pygame.init()
+        width_px = self.config.width * TILE_SIZE
+        height_px = self.config.height * TILE_SIZE
+        window = pygame.display.set_mode((width_px, height_px))
+        pygame.display.set_caption("Snakes in Combat - Tactical Map Preview")
+
+        clock = pygame.time.Clock()
+
+        COLOR_MAP = {
+            plains: (200, 200, 140), forest: (34, 139, 34),
+            urban: (90, 90, 90), mountains: (120, 120, 120),
+            road: (180, 150, 75), highway: (210, 180, 50),
+            debris: (130, 110, 90)
+        }
+
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+
+            window.fill((0, 0, 0))
+
+            for row in self.grid:
+                for cell in row:
+                    color = COLOR_MAP.get(cell.terrain_type, (255, 0, 255))
+                    pygame.draw.rect(
+                        window, color,
+                        pygame.Rect(cell.x * TILE_SIZE, cell.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
+                    )
+
+            pygame.display.flip()
+            clock.tick(30)
+
+        pygame.quit()
 
 
 def generate_map_from_console():
-    """
-    Console interface for custom map generation.
-
-    Prompts user for configuration parameters and generates a map.
-    Useful for testing and tuning generation parameters.
-
-    Returns:
-        Generated map grid (2D list of tile objects)
-    """
     logger = get_logger(__name__)
     logger.info("Starting console map generation")
-
     print("\n=== Snakes in Combat - Map Generator ===\n")
 
     try:
         width = int(input(f"Map width (default {MAP_WIDTH}): ") or MAP_WIDTH)
         height = int(input(f"Map height (default {MAP_HEIGHT}): ") or MAP_HEIGHT)
-
         forest = float(input("Forest density 0.0-1.0 (default 0.25): ") or 0.25)
         urban = float(input("Urban density 0.0-1.0 (default 0.15): ") or 0.15)
         mountain = float(input("Mountain density 0.0-1.0 (default 0.10): ") or 0.10)
@@ -416,14 +325,10 @@ def generate_map_from_console():
         seed = int(seed_input) if seed_input.strip() else None
 
         config = MapConfig(
-            width=width,
-            height=height,
-            forest_density=forest,
-            urban_density=urban,
-            mountain_density=mountain,
-            road_density=road_dens,
-            debris_density=debris_dens,
-            seed=seed
+            width=width, height=height,
+            forest_density=forest, urban_density=urban,
+            mountain_density=mountain, road_density=road_dens,
+            debris_density=debris_dens, seed=seed
         )
 
         logger.info("Configuration accepted, generating map")
@@ -435,12 +340,11 @@ def generate_map_from_console():
         stats = generator.get_terrain_statistics()
         print("\nTerrain Distribution:")
         for terrain_type, count in stats.items():
-            percentage = (count / (width * height)) * 100
-            print(f"  {terrain_type.capitalize()}: {count} ({percentage:.1f}%)")
+            pct = (count / (width * height)) * 100
+            print(f"  {terrain_type.capitalize()}: {count} ({pct:.1f}%)")
 
         print("\nMap Preview (ASCII):")
         print(generator.export_map_ascii())
-
         logger.info("Console map generation complete")
         return game_map
 
@@ -454,24 +358,18 @@ def generate_map_from_console():
         return None
 
 
-# Convenience function for quick generation with defaults
-def generate_default_map():
-    """
-    Generate a map with default configuration.
-
-    Returns:
-        Generated map grid (2D list of tile objects)
-    """
+def generate_default_map(visualize=False):
     logger = get_logger(__name__)
     logger.info("Generating default map")
-
     generator = MapGenerator()
-    game_map = generator.generate()
-
+    game_map = generator.generate(visualize=visualize)
     logger.info("Default map generation complete")
     return game_map
 
 
 if __name__ == "__main__":
-    # Run console interface when executed directly
-    generate_map_from_console()
+    AUTO_VISUALIZE = True
+    if AUTO_VISUALIZE:
+        generate_default_map(visualize=True)
+    else:
+        generate_map_from_console()

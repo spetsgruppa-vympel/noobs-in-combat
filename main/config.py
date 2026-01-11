@@ -1,3 +1,16 @@
+"""
+Configuration and utility functions for Snakes in Combat.
+
+This module provides:
+- Global configuration constants (screen size, map dimensions)
+- Logging setup with automatic file rotation
+- Resolution scaling utilities
+- Project root path discovery
+
+The configuration system is designed to be imported early and provide
+foundational utilities used throughout the application.
+"""
+
 import os
 import logging
 import sys
@@ -8,41 +21,45 @@ import shutil
 import pygame
 from pygame import display
 
-# ||||||||||||||||||||||||||||
-# CONFIGURATION
-# ||||||||||||||||||||||||||||
+# ============================================================================
+# CONFIGURATION CONSTANTS
+# ============================================================================
 
-# ---------------------------
-# MAP CONFIG
-# ---------------------------
+# Map dimensions in tiles
+TILE_SIZE = 40  # Size of each tile in pixels
+MAP_WIDTH = 20  # Horizontal tile count
+MAP_HEIGHT = 15  # Vertical tile count
 
-TILE_SIZE = 40  # tile size in pixels
-MAP_WIDTH = 20  # number of tiles horizontally
-MAP_HEIGHT = 15  # number of tiles vertically
-
-# ---------------------------
-# SCREEN CONFIG
-# ---------------------------
-
+# Screen resolution detection and caching
 pygame.init()
 info = display.Info()
 SCREEN_WIDTH, SCREEN_HEIGHT = info.current_w, info.current_h
 REFERENCE_SCREEN_WIDTH, REFERENCE_SCREEN_HEIGHT = 1920, 1080
-# cache the constants
-SCREEN_HEIGHT_CONSTANT = False
-SCREEN_WIDTH_CONSTANT = False
+
+# Cached resolution multipliers (computed on first use)
+_SCREEN_WIDTH_MULTIPLIER = None
+_SCREEN_HEIGHT_MULTIPLIER = None
 
 
-# ||||||||||||||||||||||||||||
+# ============================================================================
 # LOGGING CONFIGURATION
-# ||||||||||||||||||||||||||||
+# ============================================================================
 
 def setup_logging(project_root):
     """
-    Set up comprehensive logging with automatic file management.
+    Configure comprehensive logging with automatic file management.
+
+    Creates two directories:
+    - log_dump/: Current logs (files less than 1 day old)
+    - old_log_dump/: Archived logs (files older than 1 day)
+
+    Log files are named: game_YYYYMMDD_HHMMSS.log
 
     Args:
-        project_root: Path to the project root directory
+        project_root (Path): Path to the project root directory
+
+    Returns:
+        logging.Logger: Configured logger instance for the application
     """
     # Create log directories
     log_dir = Path(project_root) / "log_dump"
@@ -51,141 +68,177 @@ def setup_logging(project_root):
     log_dir.mkdir(exist_ok=True)
     old_log_dir.mkdir(exist_ok=True)
 
-    # Move old log files (older than 1 day) to old_log_dump
-    _cleanup_old_logs(log_dir, old_log_dir)
+    # Archive old log files before starting new session
+    _archive_old_logs(log_dir, old_log_dir)
 
-    # Create log filename with timestamp
-    log_filename = f"game_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    # Generate timestamped log filename
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_filename = f"game_{timestamp}.log"
     log_path = log_dir / log_filename
 
-    # Configure root logger with custom format
+    # Configure root logger
     logging.basicConfig(
         level=logging.DEBUG,
         format='[%(asctime)s] - [%(name)s] - [%(levelname)s] - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         handlers=[
             logging.FileHandler(log_path, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)  # Also print to console
+            logging.StreamHandler(sys.stdout)
         ]
     )
 
-    # Create and return logger
+    # Create application logger
     logger = logging.getLogger('SnakesInCombat')
     logger.info(f"Logging initialized. Log file: {log_path}")
 
     return logger
 
 
-def _cleanup_old_logs(log_dir, old_log_dir):
-    """Move log files older than 1 day to old_log_dump directory."""
-    now = datetime.now()
-    cutoff_time = now - timedelta(days=1)
+def _archive_old_logs(log_dir, archive_dir):
+    """
+    Move log files older than 1 day to archive directory.
+
+    This prevents the log directory from becoming cluttered with old logs
+    while preserving them for later analysis if needed.
+
+    Args:
+        log_dir (Path): Directory containing current logs
+        archive_dir (Path): Directory for archived logs
+    """
+    cutoff_time = datetime.now() - timedelta(days=1)
 
     for log_file in log_dir.glob("*.log"):
-        # Get file modification time
+        # Check file modification time
         file_mtime = datetime.fromtimestamp(log_file.stat().st_mtime)
 
-        # Move if older than 1 day
         if file_mtime < cutoff_time:
-            dest = old_log_dir / log_file.name
+            # Move old log to archive
+            dest = archive_dir / log_file.name
             shutil.move(str(log_file), str(dest))
-            print(f"Moved old log file: {log_file.name} to old_log_dump")
+            print(f"Archived old log: {log_file.name}")
 
 
 def get_logger(name=None):
     """
     Get a logger instance for a specific module.
 
+    This should be called at the top of each module:
+        logger = get_logger(__name__)
+
     Args:
-        name: Name of the logger (typically __name__)
+        name (str, optional): Logger name, typically __name__
 
     Returns:
-        logging.Logger instance
+        logging.Logger: Logger instance
     """
     return logging.getLogger(name or 'SnakesInCombat')
 
 
-# ||||||||||||||||||||||||||||
-# UTIL FUNCTIONS
-# ||||||||||||||||||||||||||||
-
-# ---------------------------
-# CONVERT FROM NUMBER TO SCREEN MULTIPLIER
-# ---------------------------
+# ============================================================================
+# RESOLUTION UTILITIES
+# ============================================================================
 
 def resolution_converter(coord, axis):
     """
-    Convert from reference size to actual screen size.
+    Convert reference coordinates to actual screen coordinates.
+
+    This allows UI elements to be defined using reference dimensions
+    (1920x1080) and automatically scale to the actual display resolution.
+
+    The multipliers are cached after first computation for performance.
 
     Args:
-        coord: Coordinate value to convert
-        axis: 'x' or 'y' axis
+        coord (float): Coordinate value in reference resolution
+        axis (str): 'x' for horizontal, 'y' for vertical
 
     Returns:
-        Converted coordinate value
+        float: Scaled coordinate for actual screen resolution
+
+    Raises:
+        ValueError: If axis is not 'x' or 'y'
+
+    Example:
+        # Convert 960 pixels (half of 1920) to current screen width
+        center_x = resolution_converter(960, 'x')
     """
-    global SCREEN_WIDTH, SCREEN_HEIGHT, REFERENCE_SCREEN_WIDTH, REFERENCE_SCREEN_HEIGHT
-    global SCREEN_HEIGHT_CONSTANT, SCREEN_WIDTH_CONSTANT
+    global _SCREEN_WIDTH_MULTIPLIER, _SCREEN_HEIGHT_MULTIPLIER
 
     logger = get_logger(__name__)
 
     if axis == 'x':
-        if not SCREEN_WIDTH_CONSTANT:
-            SCREEN_WIDTH_CONSTANT = SCREEN_WIDTH / REFERENCE_SCREEN_WIDTH
-            logger.debug(f"Calculated SCREEN_WIDTH_CONSTANT: {SCREEN_WIDTH_CONSTANT}")
-        return SCREEN_WIDTH_CONSTANT * coord
+        if _SCREEN_WIDTH_MULTIPLIER is None:
+            _SCREEN_WIDTH_MULTIPLIER = SCREEN_WIDTH / REFERENCE_SCREEN_WIDTH
+            logger.debug(f"Computed width multiplier: {_SCREEN_WIDTH_MULTIPLIER:.4f}")
+        return _SCREEN_WIDTH_MULTIPLIER * coord
 
     elif axis == 'y':
-        if not SCREEN_HEIGHT_CONSTANT:
-            SCREEN_HEIGHT_CONSTANT = SCREEN_HEIGHT / REFERENCE_SCREEN_HEIGHT
-            logger.debug(f"Calculated SCREEN_HEIGHT_CONSTANT: {SCREEN_HEIGHT_CONSTANT}")
-        return SCREEN_HEIGHT_CONSTANT * coord
+        if _SCREEN_HEIGHT_MULTIPLIER is None:
+            _SCREEN_HEIGHT_MULTIPLIER = SCREEN_HEIGHT / REFERENCE_SCREEN_HEIGHT
+            logger.debug(f"Computed height multiplier: {_SCREEN_HEIGHT_MULTIPLIER:.4f}")
+        return _SCREEN_HEIGHT_MULTIPLIER * coord
 
     else:
-        logger.error(f"Invalid axis parameter: {axis}. Must be 'x' or 'y'")
+        logger.error(f"Invalid axis: {axis} (must be 'x' or 'y')")
         raise ValueError("Axis must be 'x' or 'y'")
 
 
-# ---------------------------
-# GET PROJECT ROOT
-# ---------------------------
-_cached_root = None  # module-level cache for the root dir
+# ============================================================================
+# PROJECT ROOT DISCOVERY
+# ============================================================================
+
+_CACHED_PROJECT_ROOT = None  # Module-level cache
 
 
 def get_project_root(marker="main"):
     """
-    Automatically find the project root by looking for a folder named `marker`.
-    Caches the result for future calls.
+    Automatically find the project root directory.
+
+    Searches upward from the current file location until it finds a directory
+    containing the marker folder. The result is cached for subsequent calls.
 
     Args:
-        marker: Directory name to search for (default: "main")
+        marker (str): Directory name to search for (default: "main")
 
     Returns:
-        Path to project root directory
+        str: Absolute path to project root directory
 
     Raises:
         FileNotFoundError: If project root cannot be found
+
+    Example:
+        root = get_project_root()  # Finds directory containing "main/" folder
+        assets_path = os.path.join(root, "assets", "ui")
     """
-    global _cached_root
+    global _CACHED_PROJECT_ROOT
 
     logger = get_logger(__name__)
 
-    if _cached_root:
-        logger.debug(f"Using cached project root: {_cached_root}")
-        return _cached_root
+    # Return cached value if available
+    if _CACHED_PROJECT_ROOT:
+        logger.debug(f"Using cached project root: {_CACHED_PROJECT_ROOT}")
+        return _CACHED_PROJECT_ROOT
 
+    # Start search from current file's directory
     current_dir = os.path.abspath(os.path.dirname(__file__))
-    logger.debug(f"Starting project root search from: {current_dir}")
+    logger.debug(f"Searching for project root from: {current_dir}")
 
+    # Walk up directory tree
     while True:
         marker_path = os.path.join(current_dir, marker)
-        if os.path.exists(marker_path):
-            _cached_root = current_dir
-            logger.info(f"Project root found: {_cached_root}")
-            return _cached_root
 
+        if os.path.exists(marker_path):
+            _CACHED_PROJECT_ROOT = current_dir
+            logger.info(f"Project root found: {_CACHED_PROJECT_ROOT}")
+            return _CACHED_PROJECT_ROOT
+
+        # Move to parent directory
         parent_dir = os.path.dirname(current_dir)
-        if parent_dir == current_dir:  # reached filesystem root
-            logger.error(f"Could not find project root containing '{marker}'")
-            raise FileNotFoundError(f"Could not find project root containing '{marker}'")
+
+        # Check if we've reached filesystem root
+        if parent_dir == current_dir:
+            logger.error(f"Project root not found (searched for '{marker}' directory)")
+            raise FileNotFoundError(
+                f"Could not find project root containing '{marker}' directory"
+            )
+
         current_dir = parent_dir

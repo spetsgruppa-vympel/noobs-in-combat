@@ -1,33 +1,106 @@
-# contains perks used by buildings or units
+"""
+Perk and ability definitions for units and weapons.
 
-class class_ability_type:  # define ability type class used l8r
-    def __init__(self,
-                 name):
+Perks provide special abilities that modify unit behavior beyond basic stats.
+They fall into four categories:
+
+1. MODIFIER: Passive bonuses conditional on circumstances
+   Example: +50% damage to urban units
+
+2. REQUIREMENT: Things needed to perform actions
+   Example: Radio required to call artillery
+
+3. TRIGGERED: Actions that activate on specific events
+   Example: Ambush bonus on first attack
+
+4. PASSIVE: Always-active abilities
+   Example: Cloaking
+
+IMPORTANT: When using perks, ALWAYS use clone_with() to create instances
+with specific values. Never use the base perk objects directly, as they
+contain placeholder values (needs_assignment) that must be replaced.
+"""
+
+
+# ============================================================================
+# ABILITY TYPE DEFINITIONS
+# ============================================================================
+
+class class_ability_type:
+    """
+    Ability type classification.
+
+    Used to categorize perks by their behavior pattern, which helps
+    the game engine know when and how to apply them.
+    """
+
+    def __init__(self, name):
+        """
+        Initialize an ability type.
+
+        Args:
+            name (str): Type identifier
+        """
         self.name = name
 
+
+# Define the four ability type categories
 requirement_type = class_ability_type("requirement")
 modifier_type = class_ability_type("modifier")
 triggered_type = class_ability_type("triggered")
 passive_type = class_ability_type("passive")
 
-class perks:  # define perks class used by units and weapons
-    def __init__(self,
-                 name,  # name of the ability, also used to redirect to the adequate functions
-                 abilityType,  # e.g. 'modifier', 'requirement', 'triggered', 'passive'
-                 modifier=None,  # e.g. damageMult 0.5, specific use cases will be specified in the objects
-                 condition=None,  # e.g. terrain = urban
-                 requires=None,  # e.g. ['radio']
-                 triggerEvent=None,  # e.g. 'ambush'
-                 duration=None,  # e.g. 1 turn, 'until_used', etc.
-                 description=None,  # description
-                 icon=None  # icon
 
-                 # modifier means a passive damage modifier conditioned by something e.g. +50% damage to urban units for flamethrowers
-                 # requirement means the unit/attack requires something in order to execute an action, e.g. radio
-                 # triggered means that on a certain action (trigger) it does something, e.g. ambush
-                 # passive means a passive ability that always applies to the unit with exceptions e.g. cloaked
+# ============================================================================
+# PERK CLASS
+# ============================================================================
 
-                 ):
+class perks:
+    """
+    Special ability that modifies unit/weapon behavior.
+
+    Perks are flexible ability containers that can represent various
+    gameplay mechanics. They use a factory pattern (clone_with) to
+    create specific instances from templates.
+
+    Attributes:
+        name (str): Ability name
+        abilityType (class_ability_type): Category (modifier/requirement/etc)
+        modifier (varies): Effect value (damage mult, range, etc)
+        condition (varies): When this ability applies
+        requires (list): Prerequisites for this ability
+        triggerEvent (str): Event that activates this ability
+        duration (varies): How long effect lasts
+        description (str): UI description text
+        icon (str): Icon identifier for rendering
+    """
+
+    def __init__(
+            self,
+            name,
+            abilityType,
+            modifier=None,
+            condition=None,
+            requires=None,
+            triggerEvent=None,
+            duration=None,
+            description=None,
+            icon=None
+    ):
+        """
+        Initialize a perk.
+
+        Args:
+            name (str): Perk name
+            abilityType (class_ability_type): Type category
+            modifier: Value or multiplier for effect
+            condition: When this perk applies
+            requires (list): Prerequisites
+            triggerEvent (str): Activation event
+            duration: Effect duration
+            description (str): UI text
+            icon (str): Icon identifier
+        """
         self.name = name
         self.abilityType = abilityType
         self.modifier = modifier
@@ -38,31 +111,46 @@ class perks:  # define perks class used by units and weapons
         self.description = description
         self.icon = icon
 
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
-        # when using a perk ALWAYS USE CLONE_WITH
+    def clone_with(
+            self,
+            name=None,
+            abilityType=None,
+            modifier=None,
+            condition=None,
+            requires=None,
+            triggerEvent=None,
+            duration=None
+    ):
+        """
+        Create a copy of this perk with modified attributes.
 
+        This is the PRIMARY way to use perks. Base perks are templates with
+        needs_assignment placeholders. Use clone_with() to create actual
+        instances with real values.
 
-    def clone_with(self,  # function to clone an object with different attributes
-                   name=None,
-                   abilityType=None,
-                   modifier=None,
-                   condition=None,
-                   requires=None,
-                   triggerEvent=None,
-                   duration=None,
-                   ):
-        # prepare new attribute values, fallback to existing ones if none are specified
+        Args:
+            name (str, optional): Override name
+            abilityType (class_ability_type, optional): Override type
+            modifier (optional): Set modifier value
+            condition (optional): Set condition
+            requires (list, optional): Set requirements
+            triggerEvent (str, optional): Set trigger
+            duration (optional): Set duration
+
+        Returns:
+            perks: New perk instance with specified values
+
+        Raises:
+            ValueError: If any attribute is still needs_assignment
+
+        Example:
+            # Template defines radio as needing a modifier (range)
+            radio = perks("Radio", requirement_type, needs_assignment, ...)
+
+            # Create instance with specific range
+            unit_radio = radio.clone_with(modifier=3)  # 3 tile range
+        """
+        # Determine final attribute values (use new value if provided, else keep existing)
         attrs = {
             'name': name if name is not None else self.name,
             'abilityType': abilityType if abilityType is not None else self.abilityType,
@@ -75,68 +163,139 @@ class perks:  # define perks class used by units and weapons
             'icon': self.icon,
         }
 
-        # validate that none of the attributes are 'needs_assignment'
+        # Validate that no placeholders remain
         for key, value in attrs.items():
             if value == 'needs_assignment':
-                raise ValueError(f"attribute '{key}' requires assignment and cannot be 'needs_assignment'.")
+                raise ValueError(
+                    f"Attribute '{key}' requires assignment in clone_with(). "
+                    f"Cannot create perk with needs_assignment placeholder."
+                )
 
-        # create and return new instance with validated attributes
+        # Create and return new perk instance
         return perks(**attrs)
 
-needs_assignment = object()  # define needs_assignment used in clone_with and objects to delay assignment
 
-# radio perk, uses modifier for range in tiles
-radio = perks("Radio", requirement_type, needs_assignment, None,None,
-              None, needs_assignment, None, None, )
+# Sentinel object for placeholder values
+needs_assignment = object()
 
-amphibious = perks("Amphibious", passive_type,None, None,
-                   None, None, None, None, )
+# ============================================================================
+# PERK TEMPLATE DEFINITIONS
+# ============================================================================
+# These are templates. ALWAYS use clone_with() to create actual instances.
+# ============================================================================
 
-ambush = perks("Ambush", triggered_type, None, None,
-               needs_assignment, None, None, None)
+# Radio: Required to coordinate with other units or call support
+# Modifier = radio range in tiles
+radio = perks(
+    name="Radio",
+    abilityType=requirement_type,
+    modifier=needs_assignment,  # Must specify range when cloning
+    duration=needs_assignment  # Must specify duration when cloning
+)
 
-capture = perks("Capture", requirement_type, None, None, None,
-                None, None, None, None)
+# Amphibious: Can move through water tiles
+amphibious = perks(
+    name="Amphibious",
+    abilityType=passive_type
+)
 
-destruction = perks("Destruction", modifier_type, None, None, None,
-                    None, None, None, None)
+# Ambush: Bonus damage on surprise attacks
+# Requires = list of requirements (like "undetected")
+ambush = perks(
+    name="Ambush",
+    abilityType=triggered_type,
+    requires=needs_assignment  # Must specify requirements when cloning
+)
 
-# uses modifier for amount of turns before needing to be resupplied
-fuel = perks("Fuel", requirement_type, needs_assignment, None, None,
-             None, None, None, None)
+# Capture: Can capture buildings and objectives
+capture = perks(
+    name="Capture",
+    abilityType=requirement_type
+)
 
-headshot = perks("Sniper", modifier_type, None, None,
-                 None, None, None, None, None)
+# Destruction: Bonus damage to structures
+destruction = perks(
+    name="Destruction",
+    abilityType=modifier_type
+)
 
-# uses modifier for %hp healed per turn
-healing = perks("Medic",passive_type, needs_assignment, None,
-                None, None, None, None, None)
+# Fuel: Limited operational range (vehicles)
+# Modifier = number of turns before refueling
+fuel = perks(
+    name="Fuel",
+    abilityType=requirement_type,
+    modifier=needs_assignment  # Must specify fuel capacity when cloning
+)
 
-# uses modifier for the amount of times the unit is allowed to attack this turn
-multi_attack = perks("Multi-attack", requirement_type, needs_assignment, None,
-                     None, None, None, None, None)
+# Headshot: Bonus damage to infantry (snipers)
+headshot = perks(
+    name="Sniper",
+    abilityType=modifier_type
+)
 
-# ditto for movement
-multi_move = perks("Multi-move", requirement_type, needs_assignment, None,
-                   None, None, None, None, None)
+# Healing: Restores HP to nearby units (medics)
+# Modifier = % HP healed per turn
+healing = perks(
+    name="Medic",
+    abilityType=passive_type,
+    modifier=needs_assignment  # Must specify heal rate when cloning
+)
 
-no_turret = perks("No turret", requirement_type, None, None,
-                  None, None, None, None, None)
+# Multi-attack: Can attack multiple times per turn
+# Modifier = number of extra attacks allowed
+multi_attack = perks(
+    name="Multi-attack",
+    abilityType=requirement_type,
+    modifier=needs_assignment  # Must specify attack count when cloning
+)
 
-# uses modifier for % damage reduced
-resistance = perks("Resistance", modifier_type, needs_assignment, None,
-               None, None, None, None, None)
+# Multi-move: Can move multiple times per turn
+# Modifier = number of extra moves allowed
+multi_move = perks(
+    name="Multi-move",
+    abilityType=requirement_type,
+    modifier=needs_assignment  # Must specify move count when cloning
+)
 
-# uses modifier for tile range increased
-scouting = perks("Scouting", modifier_type, needs_assignment, None,
-                 None, None, None, None, None)
+# No turret: Cannot fire while moving
+no_turret = perks(
+    name="No turret",
+    abilityType=requirement_type
+)
 
-suppressor = perks("Suppressor", passive_type, None, None,
-                   None, None, None, None, None)
+# Resistance: Damage reduction against specific types
+# Modifier = % damage reduced
+resistance = perks(
+    name="Resistance",
+    abilityType=modifier_type,
+    modifier=needs_assignment  # Must specify reduction % when cloning
+)
 
-# uses modifier for accepted transport weight
-transport = perks("Transport", requirement_type, needs_assignment, None,
-                  None, None, None, None, None)
+# Scouting: Extended vision range
+# Modifier = extra sight range in tiles
+scouting = perks(
+    name="Scouting",
+    abilityType=modifier_type,
+    modifier=needs_assignment  # Must specify extra range when cloning
+)
 
-# TODO: descriptions and icons, the perks too
-# TODO: cloaked, napalm, i dont want to do them
+# Suppressor: Reduces suppression effect on this unit
+suppressor = perks(
+    name="Suppressor",
+    abilityType=passive_type
+)
+
+# Transport: Can carry other units
+# Modifier = transport capacity (weight units can carry)
+transport = perks(
+    name="Transport",
+    abilityType=requirement_type,
+    modifier=needs_assignment  # Must specify capacity when cloning
+)
+
+# ============================================================================
+# TODO: FUTURE PERKS
+# ============================================================================
+# - Cloaked: Invisible until attacking or detected
+# - Napalm: Area damage over time
+# - Add descriptions and icons for all perks

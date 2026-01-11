@@ -47,7 +47,7 @@ class units:  # contains the attributes common to every single unit
 
 def defineUnits():
     # imports
-    from .unitData.mobilityTypes import footMobility, towedMobility, tireMobility, tracksMobility
+    from .unitData.unitClasses import footMobility, towedMobility, tireMobility, tracksMobility
     from .unitData.weapons import (
         assaultRifle, smg, grenade, machineGunLt, machineGunMd, sniperMd,
         antiTankRifle, bazooka, rpg, antiTankMd, machineGunVehicle, antiTankHEAT,
