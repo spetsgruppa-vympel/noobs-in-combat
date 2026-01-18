@@ -297,5 +297,4 @@ transport = perks(
 # TODO: FUTURE PERKS
 # ============================================================================
 # - Cloaked: Invisible until attacking or detected
-# - Napalm: Area damage over time
 # - Add descriptions and icons for all perks
