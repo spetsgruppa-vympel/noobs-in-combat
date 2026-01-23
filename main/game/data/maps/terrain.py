@@ -1,5 +1,5 @@
 """
-Terrain type definitions for Snakes in Combat.
+Terrain type definitions
 
 Defines all terrain types with their gameplay properties including movement costs,
 defensive bonuses, and special characteristics. Terrain affects unit movement,
@@ -128,3 +128,45 @@ debris = terrain(
     intDefenseBonus=2,
     prcntDefenseBonus=10
 )
+
+# River: Water terrain - difficult to cross, blocks most units
+river = terrain(
+    name="River",
+    movementCost=3.0,  # Very slow movement
+    blocksSight=False,  # Can see across water
+    intDefenseBonus=0,
+    prcntDefenseBonus=-15,  # Vulnerable while crossing
+)
+
+# Floodplain: Flat fertile land near rivers
+floodplain = terrain(
+    name="Floodplain",
+    movementCost=1.0,
+    blocksSight=False,
+    intDefenseBonus=0,
+    prcntDefenseBonus=0
+)
+
+# Bridge: Crosses rivers easily
+bridge = terrain(
+    name="Bridge",
+    movementCost=0.8,
+    blocksSight=False,
+    intDefenseBonus=0,
+    prcntDefenseBonus=-10  # Exposed on bridge
+)
+
+# Wetland: Swampy terrain near water
+wetland = terrain(
+    name="Wetland",
+    movementCost=1.8,
+    blocksSight=False,
+    intDefenseBonus=0,
+    prcntDefenseBonus=5
+)
+
+# All terrain types for iteration
+ALL_TERRAIN_TYPES = [
+    plains, forest, urban, mountains, road, highway,
+    debris, river, floodplain, bridge, wetland
+]

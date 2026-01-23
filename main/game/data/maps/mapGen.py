@@ -1,1005 +1,818 @@
 """
-Procedural Map Generator for Snakes in Combat.
+Procedural map generator with automatic validation and correction.
 
-Generates tactical maps with algorithmic balance guarantees through
-intelligent placement of strategic elements. No visualization included
-(preview handled by menuManager.py).
+This generator includes built-in validators that run during generation
+and automatically fix issues like disconnected regions, imbalanced
+strategic elements, and ramp placement errors.
+
+Public API:
+    config = MapConfig(width=40, height=30, seed=12345)
+    generator = MapGenerator(config)
+    grid = generator.generate()
+    stats = generator.get_statistics()
 """
 
 import random
 from collections import deque
 from typing import List, Tuple, Dict, Set, Optional
-from math import hypot
-
-from main.config import get_logger, MAP_WIDTH, MAP_HEIGHT, TILE_SIZE
-from main.game.data.maps.terrain import plains, forest, urban, mountains, road, highway, debris
+from main.config import get_logger
+from main.game.data.maps.config import MapConfig
 from main.game.data.maps.tile import tile
+from main.game.data.maps.terrain import plains, forest, urban, mountains, road, debris
+from main.game.data.maps.utils import (
+    create_grid, valid_pos, neighbors_4, neighbors_8, manhattan,
+    direction_from_offset, bfs_reachable, find_components, astar_path,
+    manhattan_path, find_cluster
+)
 
-# ============================================================================
-# GENERATION CONSTANTS
-# ============================================================================
-
-DEFAULT_FOREST_DENSITY = 0.25
-DEFAULT_URBAN_DENSITY = 0.15
-DEFAULT_MOUNTAIN_DENSITY = 0.10
-DEFAULT_ROAD_DENSITY = 0.06
-DEFAULT_DEBRIS_DENSITY = 0.05
-DEFAULT_ELEVATION_DENSITY = 0.18
-DEFAULT_BUILDING_DENSITY = 0.08
-
-MIN_ELEVATION = 0
-MAX_ELEVATION = 3
-RAMP_ELEVATION_INCREMENT = 1
-MIN_BUILDING_SPACING = 3
-
-DEFAULT_SMOOTHING_PASSES = 2
-SMOOTHING_MIN_NEIGHBORS = 3
-
-# Strategic element counts (algorithmically balanced)
-CONTROL_ZONE_COUNT = 5  # Always odd number for center + pairs
-HIGH_GROUND_CLUSTERS_PER_SIDE = 2  # Equal count per side
-BUILDING_COUNT = 12  # Even number for balanced distribution
-
-# Elevation growth rules (tunable)
-MIN_SUPPORT_NEIGHBORS_FOR_PROMOTE = 2  # number of neighbors at previous elevation required
-MIN_RAMP_NEIGHBORS_FOR_PROMOTE = 1     # number of ramp tiles adjacent to previous-elevation neighbors required
-
-# Ramp generation probability when a border exists
-RAMP_PLACE_PROB = 0.75
-
-# Smoothing and seed sizes
-LEVEL1_SEED_COUNT_FACTOR = 0.002  # seeds per tile for elevation level 1 (scaled by area)
-SEED_GROWTH_TARGET_FACTOR = 0.01  # fraction of map area to consume per seed cluster on average
-
-# Accessibility retry attempts
-MAX_CONNECTIVITY_FIXES = 6
-
-# ============================================================================
-# MAP CONFIGURATION
-# ============================================================================
-
-class MapConfig:
-    """Configuration parameters for map generation."""
-
-    def __init__(
-        self,
-        width=MAP_WIDTH,
-        height=MAP_HEIGHT,
-        forest_density=DEFAULT_FOREST_DENSITY,
-        urban_density=DEFAULT_URBAN_DENSITY,
-        mountain_density=DEFAULT_MOUNTAIN_DENSITY,
-        road_density=DEFAULT_ROAD_DENSITY,
-        debris_density=DEFAULT_DEBRIS_DENSITY,
-        elevation_density=DEFAULT_ELEVATION_DENSITY,
-        building_density=DEFAULT_BUILDING_DENSITY,
-        seed=None,
-        smoothing_passes=DEFAULT_SMOOTHING_PASSES,
-        spawn_point_1=None,
-        spawn_point_2=None
-    ):
-        """Initialize map configuration."""
-        self.width = width
-        self.height = height
-        self.forest_density = forest_density
-        self.urban_density = urban_density
-        self.mountain_density = mountain_density
-        self.road_density = road_density
-        self.debris_density = debris_density
-        self.elevation_density = elevation_density
-        self.building_density = building_density
-        self.seed = seed
-        self.smoothing_passes = smoothing_passes
-
-        # Default spawn points (opposing quadrants)
-        self.spawn_point_1 = spawn_point_1 or (width // 4, height // 4)
-        self.spawn_point_2 = spawn_point_2 or (3 * width // 4, 3 * height // 4)
-
-        self.logger = get_logger(__name__)
-        self.logger.info(f"MapConfig: {width}x{height}")
-
-
-# ============================================================================
-# MAP GENERATOR WITH ALGORITHMIC FAIRNESS
-# ============================================================================
 
 class MapGenerator:
     """
-    Procedural map generator with algorithmic balance guarantees.
+    Self-correcting procedural map generator.
 
-    Ensures competitive balance through intelligent placement during
-    generation rather than post-generation validation.
+    Automatically validates and fixes:
+    - Disconnected regions (creates corridors)
+    - Imbalanced strategic elements (adjusts placement)
+    - Invalid ramp placement (corrects elevation/ramp rules)
+    - Unreachable spawn points (carves access paths)
+
+    Example:
+        >>> config = MapConfig(width=40, height=30, seed=42)
+        >>> generator = MapGenerator(config)
+        >>> grid = generator.generate()  # Automatically corrected
+        >>> stats = generator.get_statistics()
+        >>> print(f"Corrections made: {stats.get('corrections_applied', 0)}")
     """
 
-    def __init__(self, config=None):
-        """Initialize the map generator."""
+    def __init__(self, config: MapConfig = None):
+        """Initialize generator with configuration."""
         self.config = config or MapConfig()
         self.logger = get_logger(__name__)
+
+        # Initialize deterministic RNG
+        if self.config.seed is not None:
+            self.rng = random.Random(self.config.seed)
+            self.logger.info(f"Generator initialized with seed: {self.config.seed}")
+        else:
+            self.rng = random.Random()
+            self.logger.info("Generator initialized with random seed")
+
+        # Map data
         self.grid: List[List[tile]] = []
         self.buildings: List[Tuple[int, int]] = []
         self.control_zones: List[Tuple[int, int]] = []
-        self.high_ground_clusters: List[Tuple[int, int]] = []
-        self.choke_points: List[Tuple[int, int]] = []
+        self.high_ground: List[Tuple[int, int]] = []
+        self.chokepoints: List[Tuple[int, int]] = []
 
-        if self.config.seed is not None:
-            random.seed(self.config.seed)
-            self.logger.info(f"Random seed: {self.config.seed}")
+        # Correction tracking
+        self.corrections = {
+            'connectivity_fixes': 0,
+            'ramp_corrections': 0,
+            'balance_adjustments': 0,
+            'spawn_access_fixes': 0
+        }
 
-    # ---------------------------
-    # Public entry
-    # ---------------------------
-    def generate(self):
-        """Generate a guaranteed balanced tactical map."""
-        self.logger.info(f"Generating {self.config.width}x{self.config.height} map")
+    def generate(self) -> List[List[tile]]:
+        """
+        Generate complete map with automatic validation and correction.
 
-        # Single generation flow
-        self._initialize_grid()
+        Generation phases:
+        1. Initialize grid
+        2. Generate terrain
+        3. Generate elevation with validation
+        4. Smooth terrain
+        5. Auto-correct connectivity
+        6. Place strategic elements with auto-balancing
+        7. Validate and fix all invariants
 
-        # Terrain: seeded growth to avoid edge bias
-        self._generate_terrain_seeded()
+        Returns:
+            Validated and corrected grid
+        """
+        self.logger.info(f"Generating {self.config.width}×{self.config.height} map")
 
-        # Elevation: iterative growth with ramp & support constraints
-        self._generate_elevation_seeded_and_ramped()
-
-        # Smooth terrain for realism
-        self._smooth_terrain()
-
-        # Ensure accessibility: create ramps/roads where necessary (may modify tiles)
-        self._ensure_full_accessibility()
-
-        # Strategic placements
-        self._place_balanced_control_zones()
-        self._create_elevation_clusters_near_spawns()  # may add extra high ground if needed
-        self._place_balanced_high_ground()
-        self._place_balanced_buildings()
-        self._identify_choke_points()
-
-        self.logger.info("Balanced map generated (algorithmic guarantee)")
-        return self.grid
-
-    # ---------------------------
-    # Initialization
-    # ---------------------------
-    def _initialize_grid(self):
-        """Initialize grid with plains tiles."""
-        self.grid = []
+        # Phase 1: Initialize
+        self.grid = create_grid(self.config.width, self.config.height, plains)
         self.buildings = []
         self.control_zones = []
-        self.high_ground_clusters = []
-        self.choke_points = []
+        self.high_ground = []
+        self.chokepoints = []
+        self.corrections = {k: 0 for k in self.corrections}
 
-        for y in range(self.config.height):
-            row = []
-            for x in range(self.config.width):
-                t = tile(
-                    x=x, y=y, terrain_type=plains, size=TILE_SIZE,
-                    occupied=False, is_building=False, elevation=MIN_ELEVATION,
-                    is_ramp=False, ramp_direction=None
-                )
-                row.append(t)
-            self.grid.append(row)
+        # Phase 2: Terrain generation
+        self._generate_terrain()
 
-    # ---------------------------
-    # Terrain generation (seeded growth to avoid edge bias)
-    # ---------------------------
-    def _generate_terrain_seeded(self):
-        """Place forest/mountains/urban/debris/road with seeded blob growth."""
-        width, height = self.config.width, self.config.height
-        area = width * height
+        # Phase 3: Elevation with auto-validation
+        self._generate_elevation()
+        self._validate_and_fix_ramps()  # Auto-correct ramp issues
 
-        # helper: center-biased random position (reduces edge bias)
-        def center_biased_pos():
-            # Gaussian around center with sigma proportional to map size
-            cx, cy = width / 2.0, height / 2.0
-            sigma_x = max(1.0, width / 6.0)
-            sigma_y = max(1.0, height / 6.0)
-            for _ in range(50):
-                rx = int(random.gauss(cx, sigma_x))
-                ry = int(random.gauss(cy, sigma_y))
-                if 0 <= rx < width and 0 <= ry < height:
-                    return rx, ry
-            # fallback
-            return random.randrange(0, width), random.randrange(0, height)
+        # Phase 4: Smoothing
+        self._smooth_terrain()
 
-        # seeded clusters parameters
-        def cluster_amount(density):
-            # convert density fraction into number of seeds
-            return max(1, int(area * density * 0.01))
+        # Phase 5: Auto-correct connectivity
+        self._ensure_connectivity()
+        self._ensure_spawn_access()  # Guarantee spawn accessibility
 
-        # Generic seeded growth: pick seeds then expand probabilistically
-        def seed_and_grow(seed_count, avg_cluster_size, setter_fn):
-            seeds = []
-            for _ in range(seed_count):
-                sx, sy = center_biased_pos()
-                seeds.append((sx, sy))
+        # Phase 6: Strategic elements with auto-balancing
+        self._place_strategic_elements()
+        self._auto_balance_elements()  # Adjust if imbalanced
 
-            target_total = max(1, int(avg_cluster_size * seed_count))
-            placed = 0
-            frontier = deque(seeds)
-            visited_local = set(seeds)
-            attempts = 0
-            while frontier and placed < target_total and attempts < area * 10:
-                attempts += 1
-                cx, cy = frontier.popleft()
-                if 0 <= cx < width and 0 <= cy < height:
-                    if setter_fn(cx, cy):
-                        placed += 1
-                        # grow neighbors
-                        for dx, dy in [(-1,0),(1,0),(0,-1),(0,1),(-1,-1),(1,1),(-1,1),(1,-1)]:
-                            nx, ny = cx + dx, cy + dy
-                            if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in visited_local:
-                                # probability decay for distance from seed
-                                if random.random() < 0.55:
-                                    frontier.append((nx, ny))
-                                    visited_local.add((nx, ny))
-            return placed
+        # Phase 7: Final validation
+        self._final_validation()
 
-        # Place mountains (smaller clusters, not concentrated at edges)
-        mountain_seeds = max(1, int(area * self.config.mountain_density * 0.002))
-        mountain_avg = max(3, int(area * self.config.mountain_density * 0.004))
-        def place_mountain(x,y):
-            if self.grid[y][x].terrain_type == plains:
-                self.grid[y][x].terrain_type = mountains
-                return True
-            return False
-        seed_and_grow(mountain_seeds, mountain_avg, place_mountain)
+        # Log results
+        total_corrections = sum(self.corrections.values())
+        stats = self.get_statistics()
+        self.logger.info(
+            f"Map complete: {len(self.buildings)} buildings, "
+            f"{len(self.control_zones)} zones, balance={stats['overall_balance']:.2%}, "
+            f"corrections={total_corrections}"
+        )
 
-        # Place forests (larger clusters)
-        forest_seeds = max(1, int(area * self.config.forest_density * 0.003))
-        forest_avg = max(5, int(area * self.config.forest_density * 0.01))
-        def place_forest(x,y):
-            if self.grid[y][x].terrain_type == plains:
-                self.grid[y][x].terrain_type = forest
-                return True
-            return False
-        seed_and_grow(forest_seeds, forest_avg, place_forest)
+        return self.grid
 
-        # Place urban cores (small discrete clusters, but interior-biased)
-        urban_seeds = max(1, int(area * self.config.urban_density * 0.002))
-        urban_avg = max(2, int(area * self.config.urban_density * 0.006))
-        def place_urban(x,y):
-            if self.grid[y][x].terrain_type == plains:
-                self.grid[y][x].terrain_type = urban
-                return True
-            return False
-        seed_and_grow(urban_seeds, urban_avg, place_urban)
+    # ========================================================================
+    # TERRAIN GENERATION
+    # ========================================================================
 
-        # Place debris / ruins
-        debris_seeds = max(1, int(area * self.config.debris_density * 0.002))
-        debris_avg = max(2, int(area * self.config.debris_density * 0.005))
-        def place_debris(x,y):
-            if self.grid[y][x].terrain_type == plains:
-                self.grid[y][x].terrain_type = debris
-                return True
-            return False
-        seed_and_grow(debris_seeds, debris_avg, place_debris)
+    def _generate_terrain(self):
+        """Generate terrain using seeded blob growth."""
+        # Place terrain types in order for realistic adjacencies
+        for terrain_type, density, seed_f, growth_f, adj_bonus in [
+            (mountains, self.config.mountain_density, 0.002, 0.004, {}),
+            (forest, self.config.forest_density, 0.003, 0.01, {forest: 0.2, plains: 0.1}),
+            (urban, self.config.urban_density, 0.002, 0.006, {urban: 0.25, road: 0.15}),
+            (debris, self.config.debris_density, 0.002, 0.005, {urban: 0.2}),
+            (road, self.config.road_density, 0.001, 0.004, {urban: 0.2, road: 0.15})
+        ]:
+            self._place_terrain_type(terrain_type, density, seed_f, growth_f, adj_bonus)
 
-        # Place sparse roads as connectors (we'll carve more later if needed)
-        road_seeds = max(1, int(area * self.config.road_density * 0.001))
-        road_avg = max(2, int(area * self.config.road_density * 0.004))
-        def place_road(x,y):
-            if self.grid[y][x].terrain_type == plains:
-                self.grid[y][x].terrain_type = road
-                return True
-            return False
-        seed_and_grow(road_seeds, road_avg, place_road)
+    def _place_terrain_type(self, terrain_type, density: float, seed_factor: float,
+                           growth_factor: float, adjacency_bonus: dict):
+        """Place single terrain type using seeded blob growth."""
+        area = self.config.area
+        seed_count = max(1, int(area * density * seed_factor))
+        avg_size = max(2, int(area * density * growth_factor))
+        target = seed_count * avg_size
 
-    # ---------------------------
-    # Elevation & Ramp generation (seeded & constrained)
-    # ---------------------------
-    def _generate_elevation_seeded_and_ramped(self):
-        """
-        Iteratively generate elevation plateaus and ramps:
-         - Level 1 seeds grown first (no previous-level constraint).
-         - For higher levels, require MIN_SUPPORT_NEIGHBORS_FOR_PROMOTE neighbors
-           at previous elevation AND at least MIN_RAMP_NEIGHBORS_FOR_PROMOTE
-           nearby ramps (these ramps are created after the previous level growth).
-         - Ramps are discrete tiles with direction (north/south/east/west).
-        """
-        w, h = self.config.width, self.config.height
-        area = w * h
+        # Generate center-biased seeds
+        seeds = [self._center_biased_pos() for _ in range(seed_count)]
 
-        # 1) Determine number of level1 seeds based on density
-        seed_count = max(1, int(area * self.config.elevation_density * LEVEL1_SEED_COUNT_FACTOR))
-        avg_cluster_size = max(4, int(area * SEED_GROWTH_TARGET_FACTOR))
+        # Grow from seeds
+        placed = 0
+        frontier = deque(seeds)
+        visited = set(seeds)
 
-        # helper to pick interior-biased seeds (avoids edges where possible)
-        def interior_seed():
-            margin_x = max(2, w // 10)
-            margin_y = max(2, h // 10)
-            for _ in range(40):
-                sx = random.randint(margin_x, w - 1 - margin_x)
-                sy = random.randint(margin_y, h - 1 - margin_y)
-                return sx, sy
-            return random.randrange(0, w), random.randrange(0, h)
+        while frontier and placed < target and len(visited) < area:
+            x, y = frontier.popleft()
+            if not valid_pos(x, y, self.config.width, self.config.height):
+                continue
 
-        # grow function for level N starting from seeds, but honoring constraints for N>1
-        def grow_level(level, seeds, target_tiles):
-            placed = 0
-            frontier = deque(seeds)
-            visited = set(seeds)
+            current = self.grid[y][x]
+            if current.terrain_type == plains:
+                # Calculate placement probability
+                place_prob = 0.92
+                for nx, ny, _ in neighbors_8(x, y, self.config.width, self.config.height):
+                    n_type = self.grid[ny][nx].terrain_type
+                    if n_type in adjacency_bonus:
+                        place_prob += adjacency_bonus[n_type] / 8.0
 
-            while frontier and placed < target_tiles:
-                cx, cy = frontier.popleft()
-                if not self._is_valid_position(cx, cy):
-                    continue
-                cur = self.grid[cy][cx]
-                if cur.elevation >= level:
-                    # already at or above
-                    pass
-                else:
-                    # check promotion conditions
-                    if level == 1:
-                        # accept with some probability to avoid uniform plates
-                        if random.random() < 0.92:
-                            cur.set_elevation(level)
-                            placed += 1
-                    else:
-                        # require neighbors at previous level and ramp neighbors nearby
-                        support = 0
-                        ramp_support = 0
-                        for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
-                            nx, ny = cx + dx, cy + dy
-                            if self._is_valid_position(nx, ny):
-                                ncell = self.grid[ny][nx]
-                                if ncell.elevation >= (level - 1):
-                                    support += 1
-                                # check if neighbor is a ramp that ascends from (level-2) -> (level-1)
-                                if ncell.is_ramp and getattr(ncell, 'ramp_elevation_to', None) == level:
-                                    ramp_support += 1
+                if self.rng.random() < min(1.0, place_prob):
+                    current.terrain_type = terrain_type
+                    placed += 1
 
-                        if support >= MIN_SUPPORT_NEIGHBORS_FOR_PROMOTE and ramp_support >= MIN_RAMP_NEIGHBORS_FOR_PROMOTE:
-                            cur.set_elevation(level)
-                            placed += 1
-                        else:
-                            # allow a small probability of promotion to form natural peaks if map sparse
-                            if random.random() < 0.04:
-                                cur.set_elevation(level)
-                                placed += 1
-
-                # push neighbors
-                for dx, dy in [(1,0),(-1,0),(0,1),(0,-1), (1,1),(-1,-1),(1,-1),(-1,1)]:
-                    nx, ny = cx + dx, cy + dy
-                    if self._is_valid_position(nx, ny) and (nx, ny) not in visited:
-                        # bias growth outward less aggressively with higher levels
-                        p = 0.62 if level == 1 else 0.46
-                        if random.random() < p:
+                    # Expand to neighbors
+                    for nx, ny, _ in neighbors_8(x, y, self.config.width, self.config.height):
+                        if (nx, ny) not in visited and self.rng.random() < 0.55:
                             frontier.append((nx, ny))
                             visited.add((nx, ny))
 
-            return placed
+    def _center_biased_pos(self) -> Tuple[int, int]:
+        """Generate position biased toward map center."""
+        cx = self.config.width / 2.0
+        cy = self.config.height / 2.0
+        sigma_x = max(1.0, self.config.width / 6.0)
+        sigma_y = max(1.0, self.config.height / 6.0)
 
-        # 1) Level 1 growth
-        level1_seeds = [interior_seed() for _ in range(seed_count)]
-        target_level1 = max(1, int(area * 0.01)) if avg_cluster_size == 0 else seed_count * avg_cluster_size
-        placed1 = grow_level(1, level1_seeds, target_level1)
-        self.logger.debug(f"Placed level1 tiles: {placed1}")
+        for _ in range(50):
+            x = int(self.rng.gauss(cx, sigma_x))
+            y = int(self.rng.gauss(cy, sigma_y))
+            if valid_pos(x, y, self.config.width, self.config.height):
+                return (x, y)
 
-        # After placing level1, generate ramps along borders (lower->level1)
-        self._place_ramps_around_level(1)
+        return (self.rng.randrange(self.config.width),
+                self.rng.randrange(self.config.height))
 
-        # 2) For higher levels: attempt to grow level 2..MAX_ELEVATION
-        for level in range(2, MAX_ELEVATION + 1):
-            # candidates are tiles adjacent to existing (level-1) tiles
-            candidates = set()
-            for y in range(h):
-                for x in range(w):
-                    if self.grid[y][x].elevation >= (level - 1):
-                        for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
-                            nx, ny = x + dx, y + dy
-                            if self._is_valid_position(nx, ny) and self.grid[ny][nx].elevation < level:
-                                candidates.add((nx, ny))
-
-            # choose a subset of candidates as seeds, bias interior
-            seeds = []
-            candidates_list = list(candidates)
-            random.shuffle(candidates_list)
-            seed_limit = max(1, int(len(candidates_list) * 0.18))
-            for i in range(min(seed_limit, len(candidates_list))):
-                seeds.append(candidates_list[i])
-
-            # target tiles roughly proportional to candidates and density
-            target = max(0, int(len(candidates_list) * 0.20))
-            placed = grow_level(level, seeds, target)
-            self.logger.debug(f"Placed level{level} tiles: {placed}")
-
-            # place ramps around this new level to allow further growth and access
-            self._place_ramps_around_level(level)
-
-    def _place_ramps_around_level(self, level):
-        """
-        Place ramps on lower-elevation tiles adjacent to tiles of given level
-        so they connect up to that level. Ramps are discrete tiles with direction.
-        We'll place ramps on the lower tile and mark ramp_elevation_to = level.
-        """
-        w, h = self.config.width, self.config.height
-
-        for y in range(h):
-            for x in range(w):
-                cell = self.grid[y][x]
-                # look for adjacent tile at exactly 'level'
-                for direction, dx, dy in [('north', 0, -1), ('south', 0, 1), ('east', 1, 0), ('west', -1, 0)]:
-                    nx, ny = x + dx, y + dy
-                    if not self._is_valid_position(nx, ny):
-                        continue
-                    neighbor = self.grid[ny][nx]
-                    if neighbor.elevation == level and cell.elevation == level - 1:
-                        # candidate ramp on cell pointing to neighbor
-                        if not cell.is_ramp:
-                            if random.random() < RAMP_PLACE_PROB:
-                                # mark as ramp tile
-                                cell.set_ramp(True, direction)
-                                # annotate which elevation it ramps to (used for promotion checks)
-                                setattr(cell, 'ramp_elevation_to', level)
-                        else:
-                            # ensure ramp_elevation_to is set to the highest adjacent level
-                            existing = getattr(cell, 'ramp_elevation_to', None)
-                            if existing is None or level > existing:
-                                setattr(cell, 'ramp_elevation_to', level)
-
-    # ---------------------------
-    # Accessibility & Fixes
-    # ---------------------------
-    def _ensure_full_accessibility(self):
-        """
-        Guarantee that all tiles (except impassable mountains) are reachable
-        from spawn_point_1 by walking across passable tiles and using ramps.
-        If disconnected regions exist, carve connecting corridors (roads) and
-        place ramps where needed to connect elevation differences.
-        """
-        w, h = self.config.width, self.config.height
-        start = self.config.spawn_point_1
-
-        def passable(x, y):
-            # treat mountains as impassable; everything else passable (ramps passable).
-            tt = self.grid[y][x].terrain_type
-            return tt != mountains
-
-        def neighbors4(x, y):
-            for dx, dy in [(1,0),(-1,0),(0,1),(0,-1)]:
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < w and 0 <= ny < h:
-                    yield nx, ny
-
-        # BFS to find reachable set
-        def bfs_from(sx, sy):
-            seen = set()
-            q = deque([(sx, sy)])
-            seen.add((sx, sy))
-            while q:
-                cx, cy = q.popleft()
-                for nx, ny in neighbors4(cx, cy):
-                    if (nx, ny) in seen:
-                        continue
-                    if passable(nx, ny):
-                        # ramp crossing: can move from lower to higher only if ramp exists in appropriate tile
-                        # allow movement between equal elevations freely
-                        ce = self.grid[cy][cx].elevation
-                        ne = self.grid[ny][nx].elevation
-                        if ne == ce:
-                            seen.add((nx, ny))
-                            q.append((nx, ny))
-                        elif ne == ce + 1:
-                            # climbing up: require the destination or source to be a ramp oriented correctly
-                            # if source has a ramp pointing to (nx,ny) OR destination has ramp pointing from (cx,cy) (rare)
-                            src = self.grid[cy][cx]
-                            dst = self.grid[ny][nx]
-                            # check ramps on source or dst
-                            if src.is_ramp and getattr(src, 'ramp_direction', None):
-                                # ramp could point to nx,ny: compute direction name
-                                # source ramp should point to neighbor
-                                dir_name = self._dir_from_offset(nx - cx, ny - cy)
-                                if src.ramp_direction == dir_name:
-                                    seen.add((nx, ny))
-                                    q.append((nx, ny))
-                            elif dst.is_ramp:
-                                dir_back = self._dir_from_offset(cx - nx, cy - ny)
-                                if dst.ramp_direction == dir_back:
-                                    seen.add((nx, ny))
-                                    q.append((nx, ny))
-                        elif ne + 1 == ce:
-                            # moving down: allow if there is ramp on neighbor pointing up, or on current pointing down
-                            src = self.grid[cy][cx]
-                            dst = self.grid[ny][nx]
-                            if dst.is_ramp and getattr(dst, 'ramp_direction', None):
-                                dir_back = self._dir_from_offset(cx - nx, cy - ny)
-                                if dst.ramp_direction == dir_back:
-                                    seen.add((nx, ny))
-                                    q.append((nx, ny))
-                            elif src.is_ramp:
-                                # allow descending via source ramp as well
-                                dir_name = self._dir_from_offset(nx - cx, ny - cy)
-                                if src.ramp_direction == dir_name:
-                                    seen.add((nx, ny))
-                                    q.append((nx, ny))
-                        # else elevation difference >1 -> impassable
-            return seen
-
-        reachable = bfs_from(start[0], start[1])
-        total_passable = set((x,y) for y in range(h) for x in range(w) if passable(x,y))
-
-        # If all passable tiles reachable, done
-        if reachable >= total_passable:
-            self.logger.debug("All tiles reachable from spawn1")
-            return
-
-        # Otherwise, iteratively connect components by carving roads and placing ramps
-        components = []
-        remaining = total_passable - reachable
-        seen_global = set(reachable)
-        for y in range(h):
-            for x in range(w):
-                if (x,y) in seen_global or (x,y) not in total_passable:
-                    continue
-                comp = self._get_connected_tiles(x, y, lambda xx, yy: passable(xx, yy))
-                components.append(comp)
-                seen_global.update(comp)
-
-        # connect each component back to reachable set by finding nearest pair and carving path
-        tries = 0
-        while components and tries < MAX_CONNECTIVITY_FIXES:
-            tries += 1
-            new_components = []
-            for comp in components:
-                # pick a representative tile from comp and from reachable
-                comp_list = list(comp)
-                # find nearest tile in reachable
-                best_pair = None
-                best_dist = 1e9
-                for (cx, cy) in comp_list:
-                    for (rx, ry) in reachable:
-                        d = abs(cx - rx) + abs(cy - ry)
-                        if d < best_dist:
-                            best_dist = d
-                            best_pair = ((cx, cy), (rx, ry))
-                if best_pair is None:
-                    new_components.append(comp)
-                    continue
-                start_pt, end_pt = best_pair
-
-                # carve a simple Manhattan-style corridor between start_pt and end_pt
-                sx, sy = start_pt
-                ex, ey = end_pt
-
-                # step in x then y (or vice versa) with small randomness
-                path = []
-                cx, cy = sx, sy
-                while (cx, cy) != (ex, ey):
-                    if cx != ex and (cy == ey or random.random() < 0.6):
-                        cx += 1 if ex > cx else -1
-                    elif cy != ey:
-                        cy += 1 if ey > cy else -1
-                    if (cx, cy) not in path:
-                        path.append((cx, cy))
-
-                # carve path: convert any mountains on path to plains, set roads, and place ramps for elevation differences
-                for (px, py) in path:
-                    cell = self.grid[py][px]
-                    if cell.terrain_type == mountains:
-                        cell.terrain_type = plains
-                    # set to road to indicate passable corridor
-                    if cell.terrain_type == plains:
-                        cell.terrain_type = road
-                    # if elevation difference to adjacent path tile > 0, place ramp on lower tile oriented to higher tile
-                # place ramps along path where elevation steps up
-                for (px, py) in path:
-                    for dx, dy, dname in [(1,0,'east'),(-1,0,'west'),(0,1,'south'),(0,-1,'north')]:
-                        nx, ny = px + dx, py + dy
-                        if not self._is_valid_position(nx, ny):
-                            continue
-                        cur = self.grid[py][px]
-                        nei = self.grid[ny][nx]
-                        if nei.elevation == cur.elevation + 1 and not cur.is_ramp:
-                            # place ramp on cur pointing to neighbor
-                            cur.set_ramp(True, dname)
-                            setattr(cur, 'ramp_elevation_to', nei.elevation)
-                        elif cur.elevation == nei.elevation + 1 and not nei.is_ramp:
-                            # place ramp on neighbor to allow descent/ascent
-                            nei.set_ramp(True, self._dir_from_offset(px - nx, py - ny))
-                            setattr(nei, 'ramp_elevation_to', cur.elevation)
-                # Recompute reachable set after carving
-                reachable = bfs_from(start[0], start[1])
-                # If comp now reachable, skip adding to new_components
-                if comp & reachable:
-                    continue
-                else:
-                    new_components.append(comp)
-            components = new_components
-            if not components:
-                break
-
-        # Final quick check - if still unreachable tiles exist, convert them to plains + roads and link
-        reachable = bfs_from(start[0], start[1])
-        missing = total_passable - reachable
-        if missing:
-            self.logger.warning(f"Still unreachable tiles after fixes: {len(missing)} - force connecting")
-            for (mx, my) in list(missing):
-                # make tile plain and road to maximize connectivity
-                ct = self.grid[my][mx]
-                ct.terrain_type = road
-                # connect by placing a ramp if it's elevated and neighbor available
-                for dx, dy, dname in [(1,0,'east'),(-1,0,'west'),(0,1,'south'),(0,-1,'north')]:
-                    nx, ny = mx + dx, my + dy
-                    if self._is_valid_position(nx, ny):
-                        ncell = self.grid[ny][nx]
-                        if ncell.elevation == ct.elevation + 1 and not ct.is_ramp:
-                            ct.set_ramp(True, dname)
-                            setattr(ct, 'ramp_elevation_to', ncell.elevation)
-
-    # ---------------------------
-    # Terrain smoothing (cellular automata)
-    # ---------------------------
     def _smooth_terrain(self):
         """Smooth terrain using cellular automata."""
         for _ in range(self.config.smoothing_passes):
             new_grid = [row[:] for row in self.grid]
+
             for y in range(1, self.config.height - 1):
                 for x in range(1, self.config.width - 1):
-                    current_type = self.grid[y][x].terrain_type
-                    same_neighbors = sum(
-                        1 for dy in [-1, 0, 1] for dx in [-1, 0, 1]
-                        if not (dx == 0 and dy == 0) and
-                        self.grid[y + dy][x + dx].terrain_type == current_type
-                    )
+                    current = self.grid[y][x].terrain_type
+                    if current == plains:
+                        continue
 
-                    if same_neighbors < SMOOTHING_MIN_NEIGHBORS and current_type != plains:
-                        neighbor_types = {}
+                    # Count same-type neighbors
+                    same = sum(1 for dy in [-1, 0, 1] for dx in [-1, 0, 1]
+                             if not (dx == 0 and dy == 0) and
+                             self.grid[y+dy][x+dx].terrain_type == current)
+
+                    # Convert if too few neighbors
+                    if same < 3:
+                        types = {}
                         for dy in [-1, 0, 1]:
                             for dx in [-1, 0, 1]:
                                 if dx == 0 and dy == 0:
                                     continue
-                                n_type = self.grid[y + dy][x + dx].terrain_type
-                                neighbor_types[n_type] = neighbor_types.get(n_type, 0) + 1
-                        if neighbor_types:
-                            most_common = max(neighbor_types, key=neighbor_types.get)
-                            new_grid[y][x].terrain_type = most_common
+                                t = self.grid[y+dy][x+dx].terrain_type
+                                types[t] = types.get(t, 0) + 1
+                        if types:
+                            new_grid[y][x].terrain_type = max(types, key=types.get)
+
             self.grid = new_grid
 
-    # ---------------------------
-    # Strategic placement helpers
-    # ---------------------------
-    def _place_balanced_control_zones(self):
-        """Place control zones with algorithmic balance guarantee."""
-        self.logger.debug("Placing balanced control zones")
+    # ========================================================================
+    # ELEVATION GENERATION WITH VALIDATION
+    # ========================================================================
 
-        center_x = self.config.width // 2
-        center_y = self.config.height // 2
-        self.control_zones.append((center_x, center_y))
+    def _generate_elevation(self):
+        """Generate elevation levels with support requirements."""
+        area = self.config.area
+        seed_count = max(1, int(area * self.config.elevation_density * 0.002))
+        avg_size = max(4, int(area * 0.01))
 
-        remaining = CONTROL_ZONE_COUNT - 1
-        pairs_to_place = remaining // 2
+        # Level 1: Initial seeds
+        seeds = [self._interior_pos() for _ in range(seed_count)]
+        self._grow_elevation_level(1, seeds, seed_count * avg_size, 0, 0)
+        self._place_ramps_at_level(1)
 
+        # Higher levels with support requirements
+        for level in range(2, self.config.max_elevation + 1):
+            candidates = self._find_elevation_candidates(level)
+            if not candidates:
+                break
+
+            self.rng.shuffle(candidates)
+            seeds = candidates[:max(1, int(len(candidates) * 0.18))]
+            target = max(0, int(len(candidates) * 0.20))
+
+            self._grow_elevation_level(level, seeds, target,
+                                      self.config.min_support_neighbors,
+                                      self.config.min_ramp_neighbors)
+            self._place_ramps_at_level(level)
+
+    def _interior_pos(self) -> Tuple[int, int]:
+        """Generate position away from edges."""
+        mx = max(2, self.config.width // 10)
+        my = max(2, self.config.height // 10)
+        return (self.rng.randint(mx, self.config.width - 1 - mx),
+                self.rng.randint(my, self.config.height - 1 - my))
+
+    def _find_elevation_candidates(self, level: int) -> List[Tuple[int, int]]:
+        """Find tiles adjacent to previous elevation level."""
+        candidates = set()
+        for y in range(self.config.height):
+            for x in range(self.config.width):
+                if self.grid[y][x].elevation >= level - 1:
+                    for nx, ny, _ in neighbors_4(x, y, self.config.width, self.config.height):
+                        if self.grid[ny][nx].elevation < level:
+                            candidates.add((nx, ny))
+        return list(candidates)
+
+    def _grow_elevation_level(self, level: int, seeds: List[Tuple[int, int]],
+                             target: int, min_support: int, min_ramps: int):
+        """Grow single elevation level from seeds."""
+        placed = 0
+        frontier = deque(seeds)
+        visited = set(seeds)
+
+        while frontier and placed < target:
+            x, y = frontier.popleft()
+            if not valid_pos(x, y, self.config.width, self.config.height):
+                continue
+
+            current = self.grid[y][x]
+            if current.elevation >= level:
+                continue
+
+            # Check promotion conditions
+            can_promote = False
+            if level == 1:
+                can_promote = self.rng.random() < 0.92
+            else:
+                support = sum(1 for nx, ny, _ in neighbors_4(x, y, self.config.width, self.config.height)
+                            if self.grid[ny][nx].elevation >= level - 1)
+                ramps = sum(1 for nx, ny, _ in neighbors_4(x, y, self.config.width, self.config.height)
+                          if (self.grid[ny][nx].is_ramp and
+                              getattr(self.grid[ny][nx], 'ramp_elevation_to', 0) == level))
+
+                can_promote = (support >= min_support and ramps >= min_ramps) or self.rng.random() < 0.04
+
+            if can_promote:
+                current.set_elevation(level)
+                placed += 1
+
+                # Expand
+                prob = 0.62 if level == 1 else 0.46
+                for nx, ny, _ in neighbors_4(x, y, self.config.width, self.config.height):
+                    if (nx, ny) not in visited and self.rng.random() < prob:
+                        frontier.append((nx, ny))
+                        visited.add((nx, ny))
+
+    def _place_ramps_at_level(self, level: int):
+        """Place ramps at borders of elevation level."""
+        for y in range(self.config.height):
+            for x in range(self.config.width):
+                cell = self.grid[y][x]
+                for nx, ny, direction in neighbors_4(x, y, self.config.width, self.config.height):
+                    neighbor = self.grid[ny][nx]
+                    if neighbor.elevation == level and cell.elevation == level - 1:
+                        if not cell.is_ramp and self.rng.random() < self.config.ramp_placement_probability:
+                            cell.set_ramp(True, direction)
+                            cell.ramp_elevation_to = level
+                        elif cell.is_ramp:
+                            existing = getattr(cell, 'ramp_elevation_to', None)
+                            if existing is None or level > existing:
+                                cell.ramp_elevation_to = level
+
+    def _validate_and_fix_ramps(self):
+        """AUTO-VALIDATOR: Check and fix ramp placement issues."""
+        corrections = 0
+
+        for y in range(self.config.height):
+            for x in range(self.config.width):
+                cell = self.grid[y][x]
+
+                if cell.is_ramp:
+                    # Check if ramp has higher neighbor
+                    has_higher = False
+                    for nx, ny, _ in neighbors_4(x, y, self.config.width, self.config.height):
+                        if self.grid[ny][nx].elevation > cell.elevation:
+                            has_higher = True
+                            break
+
+                    # FIX: Remove ramp if no higher neighbor
+                    if not has_higher:
+                        cell.set_ramp(False, None)
+                        if hasattr(cell, 'ramp_elevation_to'):
+                            delattr(cell, 'ramp_elevation_to')
+                        corrections += 1
+
+                # Check for large elevation differences without ramps
+                for nx, ny, direction in neighbors_4(x, y, self.config.width, self.config.height):
+                    neighbor = self.grid[ny][nx]
+                    diff = abs(cell.elevation - neighbor.elevation)
+
+                    if diff > 1 and not cell.is_ramp and not neighbor.is_ramp:
+                        # FIX: Add ramp on lower tile
+                        if cell.elevation < neighbor.elevation:
+                            cell.set_ramp(True, direction)
+                            cell.ramp_elevation_to = neighbor.elevation
+                            corrections += 1
+                        elif neighbor.elevation < cell.elevation:
+                            reverse_dir = direction_from_offset(x - nx, y - ny)
+                            if reverse_dir:
+                                neighbor.set_ramp(True, reverse_dir)
+                                neighbor.ramp_elevation_to = cell.elevation
+                                corrections += 1
+
+        if corrections > 0:
+            self.logger.debug(f"Auto-corrected {corrections} ramp issues")
+            self.corrections['ramp_corrections'] = corrections
+
+    # ========================================================================
+    # CONNECTIVITY AUTO-CORRECTION
+    # ========================================================================
+
+    def _ensure_connectivity(self):
+        """AUTO-VALIDATOR: Ensure all passable tiles are connected."""
+        max_fixes = 6
+        attempts = 0
+
+        while attempts < max_fixes:
+            # Find disconnected components
+            main = bfs_reachable(self.grid, self.config.spawn_point_1,
+                               self._is_passable, self._can_traverse)
+
+            components = find_components(self.grid, self._is_passable,
+                                        self._can_traverse, main)
+
+            if not components:
+                break  # All connected
+
+            self.logger.debug(f"Found {len(components)} disconnected regions")
+
+            # Connect each component
+            for component in components:
+                # Find nearest pair
+                best_dist = float('inf')
+                best_pair = None
+
+                comp_sample = list(component)[:50]
+                main_sample = list(main)[:50]
+
+                for c_pos in comp_sample:
+                    for m_pos in main_sample:
+                        dist = manhattan(c_pos, m_pos)
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_pair = (c_pos, m_pos)
+
+                # Create corridor
+                if best_pair:
+                    self._create_corridor(best_pair[0], best_pair[1])
+                    self.corrections['connectivity_fixes'] += 1
+
+            attempts += 1
+
+        if attempts >= max_fixes:
+            self.logger.warning(f"Connectivity fixes exhausted ({max_fixes} attempts)")
+
+    def _ensure_spawn_access(self):
+        """AUTO-VALIDATOR: Guarantee spawn points are accessible."""
+        corrections = 0
+
+        # Make spawn tiles passable
+        for spawn in [self.config.spawn_point_1, self.config.spawn_point_2]:
+            sx, sy = spawn
+            if self.grid[sy][sx].terrain_type == mountains:
+                self.grid[sy][sx].terrain_type = plains
+                corrections += 1
+
+        # Verify spawns can reach each other
+        reachable = bfs_reachable(self.grid, self.config.spawn_point_1,
+                                 self._is_passable, self._can_traverse)
+
+        if self.config.spawn_point_2 not in reachable:
+            # FIX: Create corridor between spawns
+            self._create_corridor(self.config.spawn_point_1, self.config.spawn_point_2)
+            corrections += 1
+
+        if corrections > 0:
+            self.logger.debug(f"Auto-fixed {corrections} spawn access issues")
+            self.corrections['spawn_access_fixes'] = corrections
+
+    def _is_passable(self, grid, x: int, y: int) -> bool:
+        """Check if tile is passable."""
+        if not valid_pos(x, y, self.config.width, self.config.height):
+            return False
+        return grid[y][x].terrain_type != mountains
+
+    def _can_traverse(self, grid, x1: int, y1: int, x2: int, y2: int) -> bool:
+        """Check if movement between tiles is possible."""
+        if not self._is_passable(grid, x1, y1) or not self._is_passable(grid, x2, y2):
+            return False
+
+        t1 = grid[y1][x1]
+        t2 = grid[y2][x2]
+        diff = abs(t2.elevation - t1.elevation)
+
+        if diff == 0:
+            return True
+        if diff > 1:
+            return False
+
+        # Check for ramps
+        return t1.is_ramp or t2.is_ramp
+
+    def _create_corridor(self, start: Tuple[int, int], end: Tuple[int, int]):
+        """Create corridor between two points."""
+        # Try A* first
+        path = astar_path(self.grid, start, end, self._terrain_cost)
+
+        # Fallback to Manhattan
+        if not path:
+            path = manhattan_path(start, end, self.rng)
+
+        # Carve corridor
+        for x, y in path:
+            cell = self.grid[y][x]
+            if cell.terrain_type == mountains:
+                cell.terrain_type = plains
+            if cell.terrain_type == plains:
+                cell.terrain_type = road
+
+        # Add ramps where needed
+        for i in range(len(path) - 1):
+            x1, y1 = path[i]
+            x2, y2 = path[i + 1]
+            t1 = self.grid[y1][x1]
+            t2 = self.grid[y2][x2]
+
+            if t2.elevation == t1.elevation + 1 and not t1.is_ramp:
+                direction = direction_from_offset(x2 - x1, y2 - y1)
+                if direction:
+                    t1.set_ramp(True, direction)
+                    t1.ramp_elevation_to = t2.elevation
+            elif t1.elevation == t2.elevation + 1 and not t2.is_ramp:
+                direction = direction_from_offset(x1 - x2, y1 - y2)
+                if direction:
+                    t2.set_ramp(True, direction)
+                    t2.ramp_elevation_to = t1.elevation
+
+    def _terrain_cost(self, grid, x: int, y: int) -> float:
+        """Get movement cost for terrain."""
+        if not valid_pos(x, y, self.config.width, self.config.height):
+            return 999.0
+
+        terrain = grid[y][x].terrain_type
+        if terrain == plains:
+            return 1.0
+        elif terrain == road:
+            return 0.8
+        elif terrain == mountains:
+            return 10.0
+        else:
+            return 2.0
+
+    # ========================================================================
+    # STRATEGIC PLACEMENT WITH AUTO-BALANCING
+    # ========================================================================
+
+    def _place_strategic_elements(self):
+        """Place control zones, buildings, and identify features."""
+        # Control zones
+        self._place_control_zones()
+
+        # Buildings
+        target = int(self.config.area * self.config.building_density)
+        self._place_buildings(target)
+
+        # Identify features
+        self._identify_high_ground()
+        self._identify_chokepoints()
+
+    def _place_control_zones(self):
+        """Place balanced control zones."""
+        zones = []
+
+        # Center zone
+        cx, cy = self.config.width // 2, self.config.height // 2
+        zones.append((cx, cy))
+
+        # Balanced pairs
+        remaining = self.config.control_zone_count - 1
+        pairs = remaining // 2
+
+        # Find candidates
         candidates = []
         for y in range(3, self.config.height - 3):
             for x in range(3, self.config.width - 3):
-                if (x, y) == (center_x, center_y):
+                if (x, y) == (cx, cy):
+                    continue
+                if self.grid[y][x].terrain_type == mountains:
                     continue
 
-                d1 = self._manhattan_distance(self.config.spawn_point_1, (x, y))
-                d2 = self._manhattan_distance(self.config.spawn_point_2, (x, y))
-
-                balance = 1.0 - abs(d1 - d2) / max(d1 + d2, 1)
+                d1 = manhattan(self.config.spawn_point_1, (x, y))
+                d2 = manhattan(self.config.spawn_point_2, (x, y))
 
                 if d1 < 6 or d2 < 6:
                     continue
-                if self._manhattan_distance((x, y), (center_x, center_y)) < 3:
+                if manhattan((x, y), (cx, cy)) < 3:
                     continue
-
-                # avoid placing control zones in impassable/mountain centers
-                if self.grid[y][x].terrain_type == mountains:
-                    continue
-
-                candidates.append((balance, x, y))
-
-        # sort by balance (prefer balanced positions)
-        candidates.sort(reverse=True, key=lambda c: c[0])
-
-        placed = 0
-        for balance, x, y in candidates:
-            if placed >= pairs_to_place * 2:
-                break
-
-            too_close = False
-            for zx, zy in self.control_zones:
-                if self._manhattan_distance((x, y), (zx, zy)) < 6:
-                    too_close = True
-                    break
-
-            if not too_close:
-                self.control_zones.append((x, y))
-                placed += 1
-
-        self.logger.info(f"Placed {len(self.control_zones)} balanced control zones")
-
-    def _create_elevation_clusters_near_spawns(self):
-        """Create elevated areas near each spawn if needed (helps balance)."""
-        for spawn_idx, spawn in enumerate([self.config.spawn_point_1,
-                                           self.config.spawn_point_2]):
-            distance = random.randint(5, 8)
-
-            cluster_x = int(spawn[0] + distance * (1 if spawn_idx == 0 else -1))
-            cluster_y = int(spawn[1] + distance * random.choice([-1, 0, 1]))
-
-            for dy in range(-1, 2):
-                for dx in range(-1, 2):
-                    cx, cy = cluster_x + dx, cluster_y + dy
-                    if self._is_valid_position(cx, cy):
-                        # raise to elevation 2 if free
-                        if self.grid[cy][cx].elevation < 2:
-                            self.grid[cy][cx].set_elevation(2)
-
-            # ensure ramps around newly created cluster
-            self._place_ramps_around_level(2)
-
-    def _place_balanced_high_ground(self):
-        """Ensure high ground is balanced between spawns."""
-        self.logger.debug("Balancing high ground placement")
-
-        visited = set()
-        all_clusters = []
-
-        for y in range(self.config.height):
-            for x in range(self.config.width):
-                if (x, y) in visited:
-                    continue
-                if self.grid[y][x].elevation >= 2:
-                    cluster = self._get_connected_tiles(x, y,
-                        lambda tx, ty: self.grid[ty][tx].elevation >= 2)
-                    if len(cluster) >= 6:
-                        center_x = sum(cx for cx, cy in cluster) // len(cluster)
-                        center_y = sum(cy for cx, cy in cluster) // len(cluster)
-
-                        d1 = self._manhattan_distance(self.config.spawn_point_1, (center_x, center_y))
-                        d2 = self._manhattan_distance(self.config.spawn_point_2, (center_x, center_y))
-
-                        all_clusters.append({
-                            'center': (center_x, center_y),
-                            'size': len(cluster),
-                            'd1': d1,
-                            'd2': d2,
-                            'tiles': cluster
-                        })
-                        visited.update(cluster)
-
-        self._assign_balanced_clusters(all_clusters)
-
-    def _assign_balanced_clusters(self, clusters):
-        """Assign high ground clusters ensuring balance."""
-        if not clusters:
-            return
-
-        clusters.sort(key=lambda c: c['size'], reverse=True)
-
-        spawn1_clusters = []
-        spawn2_clusters = []
-
-        for cluster in clusters:
-            if cluster['d1'] < cluster['d2']:
-                target = spawn1_clusters
-            else:
-                target = spawn2_clusters
-
-            if len(spawn1_clusters) > len(spawn2_clusters) + 1:
-                target = spawn2_clusters
-            elif len(spawn2_clusters) > len(spawn1_clusters) + 1:
-                target = spawn1_clusters
-
-            target.append(cluster)
-            self.high_ground_clusters.append(cluster['center'])
-
-        self.logger.info(
-            f"High ground balanced: Spawn1={len(spawn1_clusters)}, "
-            f"Spawn2={len(spawn2_clusters)}"
-        )
-
-    def _place_balanced_buildings(self):
-        """Place buildings with guaranteed distance balance."""
-        self.logger.debug("Placing balanced buildings")
-
-        # seed some buildings near control zones first
-        for cx, cy in self.control_zones:
-            best_pos = self._find_building_position_near(cx, cy, radius=2)
-            if best_pos:
-                bx, by = best_pos
-                self.grid[by][bx].set_building(True)
-                self.buildings.append((bx, by))
-
-        remaining = BUILDING_COUNT - len(self.buildings)
-        if remaining <= 0:
-            self.logger.info(f"Placed {len(self.buildings)} buildings (control zone anchors)")
-            return
-
-        candidates = []
-        for y in range(self.config.height):
-            for x in range(self.config.width):
-                terrain = self.grid[y][x].terrain_type
-                if terrain in [mountains, forest, debris]:
-                    continue
-                if self.grid[y][x].is_ramp or self.grid[y][x].is_building:
-                    continue
-                if not self._check_building_spacing(x, y):
-                    continue
-
-                d1 = self._manhattan_distance(self.config.spawn_point_1, (x, y))
-                d2 = self._manhattan_distance(self.config.spawn_point_2, (x, y))
 
                 balance = 1.0 - abs(d1 - d2) / max(d1 + d2, 1)
                 candidates.append((balance, x, y))
 
-        candidates.sort(reverse=True, key=lambda c: c[0])
+        candidates.sort(reverse=True)
 
-        placed = 0
+        # Place with spacing
         for balance, x, y in candidates:
-            if placed >= remaining:
+            if len(zones) >= self.config.control_zone_count:
                 break
 
-            if self._check_building_spacing(x, y):
-                self.grid[y][x].set_building(True)
-                self.buildings.append((x, y))
-                placed += 1
+            if all(manhattan((x, y), z) >= 6 for z in zones):
+                zones.append((x, y))
 
-        self.logger.info(f"Placed {len(self.buildings)} balanced buildings")
+        self.control_zones = zones
 
-    def _identify_choke_points(self):
-        """Identify natural choke points in terrain."""
-        self.logger.debug("Identifying choke points")
+    def _place_buildings(self, target: int):
+        """Place balanced buildings."""
+        buildings = []
 
-        for y in range(2, self.config.height - 2):
-            for x in range(2, self.config.width - 2):
-                if self.grid[y][x].terrain_type == mountains:
-                    continue
+        # Near control zones first
+        for cx, cy in self.control_zones:
+            pos = self._find_building_near(cx, cy, buildings, 2)
+            if pos:
+                bx, by = pos
+                self.grid[by][bx].set_building(True)
+                buildings.append((bx, by))
 
-                passable = sum(
-                    1 for dx in [-1, 0, 1] for dy in [-1, 0, 1]
-                    if not (dx == 0 and dy == 0) and
-                    self._is_valid_position(x + dx, y + dy) and
-                    self.grid[y + dy][x + dx].terrain_type != mountains
-                )
-
-                if 2 <= passable <= 4:
-                    self.choke_points.append((x, y))
-
-        self.logger.info(f"Identified {len(self.choke_points)} choke points")
-
-    # ---------------------------
-    # Utility helpers
-    # ---------------------------
-    def _find_building_position_near(self, cx: int, cy: int, radius: int) -> Optional[Tuple[int, int]]:
-        """Find a suitable building position near target coordinates."""
-        for r in range(radius + 1):
-            for dy in range(-r, r + 1):
-                for dx in range(-r, r + 1):
-                    x, y = cx + dx, cy + dy
-                    if not self._is_valid_position(x, y):
-                        continue
+        # Remaining with balance
+        remaining = target - len(buildings)
+        if remaining > 0:
+            candidates = []
+            for y in range(self.config.height):
+                for x in range(self.config.width):
                     terrain = self.grid[y][x].terrain_type
                     if terrain in [mountains, forest, debris]:
                         continue
                     if self.grid[y][x].is_ramp or self.grid[y][x].is_building:
                         continue
-                    if self._check_building_spacing(x, y):
+                    if not self._check_building_spacing((x, y), buildings):
+                        continue
+
+                    d1 = manhattan(self.config.spawn_point_1, (x, y))
+                    d2 = manhattan(self.config.spawn_point_2, (x, y))
+                    balance = 1.0 - abs(d1 - d2) / max(d1 + d2, 1)
+                    candidates.append((balance, x, y))
+
+            candidates.sort(reverse=True)
+
+            for balance, x, y in candidates[:remaining]:
+                if self._check_building_spacing((x, y), buildings):
+                    self.grid[y][x].set_building(True)
+                    buildings.append((x, y))
+
+        self.buildings = buildings
+
+    def _find_building_near(self, cx: int, cy: int, existing: List, radius: int) -> Optional[Tuple[int, int]]:
+        """Find building position near target."""
+        for r in range(radius + 1):
+            for dy in range(-r, r + 1):
+                for dx in range(-r, r + 1):
+                    x, y = cx + dx, cy + dy
+                    if not valid_pos(x, y, self.config.width, self.config.height):
+                        continue
+
+                    terrain = self.grid[y][x].terrain_type
+                    if terrain in [mountains, forest, debris]:
+                        continue
+                    if self.grid[y][x].is_ramp or self.grid[y][x].is_building:
+                        continue
+                    if self._check_building_spacing((x, y), existing):
                         return (x, y)
         return None
 
-    def _check_building_spacing(self, x: int, y: int) -> bool:
+    def _check_building_spacing(self, pos: Tuple[int, int], buildings: List) -> bool:
         """Check minimum building spacing."""
-        for bx, by in self.buildings:
-            if abs(x - bx) + abs(y - by) < MIN_BUILDING_SPACING:
-                return False
-        return True
+        return all(manhattan(pos, b) >= self.config.min_building_spacing for b in buildings)
 
-    def _get_connected_tiles(self, x: int, y: int, condition) -> Set[Tuple[int, int]]:
-        """Get all connected tiles matching condition."""
+    def _identify_high_ground(self):
+        """Identify high ground clusters."""
         visited = set()
-        queue = deque([(x, y)])
-        visited.add((x, y))
+        clusters = []
 
-        while queue:
-            cx, cy = queue.popleft()
-
-            for dx, dy in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
-                nx, ny = cx + dx, cy + dy
-
-                if not self._is_valid_position(nx, ny):
-                    continue
-                if (nx, ny) in visited:
-                    continue
-                if not condition(nx, ny):
+        for y in range(self.config.height):
+            for x in range(self.config.width):
+                if (x, y) in visited or self.grid[y][x].elevation < 2:
                     continue
 
-                visited.add((nx, ny))
-                queue.append((nx, ny))
+                cluster = find_cluster(self.grid, x, y, lambda t: t.elevation >= 2)
+                if len(cluster) >= 6:
+                    cx = sum(px for px, py in cluster) // len(cluster)
+                    cy = sum(py for px, py in cluster) // len(cluster)
+                    clusters.append((cx, cy))
+                visited.update(cluster)
 
-        return visited
+        self.high_ground = clusters
 
-    def _manhattan_distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
-        """Calculate Manhattan distance."""
-        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+    def _identify_chokepoints(self):
+        """Identify natural chokepoints."""
+        chokepoints = []
+        for y in range(2, self.config.height - 2):
+            for x in range(2, self.config.width - 2):
+                if self.grid[y][x].terrain_type == mountains:
+                    continue
 
-    def _is_valid_position(self, x: int, y: int) -> bool:
-        """Check if coordinates are within bounds."""
-        return 0 <= x < self.config.width and 0 <= y < self.config.height
+                passable = sum(1 for nx, ny, _ in neighbors_8(x, y, self.config.width, self.config.height)
+                             if self.grid[ny][nx].terrain_type != mountains)
 
-    def _dir_from_offset(self, dx: int, dy: int) -> Optional[str]:
-        """Return direction name from dx,dy for cardinal 4-neighbors."""
-        if dx == 0 and dy == -1:
-            return 'north'
-        if dx == 0 and dy == 1:
-            return 'south'
-        if dx == 1 and dy == 0:
-            return 'east'
-        if dx == -1 and dy == 0:
-            return 'west'
-        return None
+                if 2 <= passable <= 4:
+                    chokepoints.append((x, y))
 
-    # ---------------------------
-    # Statistics & verification
-    # ---------------------------
-    def get_terrain_statistics(self):
-        """Calculate terrain statistics and verify balance."""
+        self.chokepoints = chokepoints
+
+    def _auto_balance_elements(self):
+        """AUTO-VALIDATOR: Adjust elements if balance is poor."""
+        metrics = self._calculate_balance()
+
+        # If balance is poor, adjust by removing worst offenders
+        if metrics['overall_balance'] < 0.85 and len(self.buildings) > 0:
+            self.logger.debug(f"Balance suboptimal ({metrics['overall_balance']:.2%}), auto-adjusting")
+
+            # Remove buildings that hurt balance most
+            while metrics['overall_balance'] < 0.85 and len(self.buildings) > 3:
+                worst_idx = self._find_worst_building()
+                if worst_idx is not None:
+                    bx, by = self.buildings.pop(worst_idx)
+                    self.grid[by][bx].set_building(False)
+                    self.corrections['balance_adjustments'] += 1
+                    metrics = self._calculate_balance()
+                else:
+                    break
+
+            if self.corrections['balance_adjustments'] > 0:
+                self.logger.debug(f"Removed {self.corrections['balance_adjustments']} buildings to improve balance")
+
+    def _find_worst_building(self) -> Optional[int]:
+        """Find building contributing most to imbalance."""
+        if not self.buildings:
+            return None
+
+        worst_idx = None
+        worst_imbalance = 0.0
+
+        for i, (bx, by) in enumerate(self.buildings):
+            d1 = manhattan(self.config.spawn_point_1, (bx, by))
+            d2 = manhattan(self.config.spawn_point_2, (bx, by))
+            imbalance = abs(d1 - d2)
+
+            if imbalance > worst_imbalance:
+                worst_imbalance = imbalance
+                worst_idx = i
+
+        return worst_idx
+
+    def _calculate_balance(self) -> Dict[str, float]:
+        """Calculate balance metrics."""
+        metrics = {}
+
+        if self.buildings:
+            p1_dists = [manhattan(self.config.spawn_point_1, b) for b in self.buildings]
+            p2_dists = [manhattan(self.config.spawn_point_2, b) for b in self.buildings]
+            avg1 = sum(p1_dists) / len(p1_dists)
+            avg2 = sum(p2_dists) / len(p2_dists)
+            metrics['building_balance'] = min(avg1, avg2) / max(avg1, avg2) if max(avg1, avg2) > 0 else 1.0
+        else:
+            metrics['building_balance'] = 1.0
+
+        if self.control_zones:
+            cz1 = [manhattan(self.config.spawn_point_1, cz) for cz in self.control_zones]
+            cz2 = [manhattan(self.config.spawn_point_2, cz) for cz in self.control_zones]
+            avg1 = sum(cz1) / len(cz1)
+            avg2 = sum(cz2) / len(cz2)
+            metrics['control_zone_balance'] = min(avg1, avg2) / max(avg1, avg2) if max(avg1, avg2) > 0 else 1.0
+        else:
+            metrics['control_zone_balance'] = 1.0
+
+        metrics['overall_balance'] = min(metrics['building_balance'], metrics['control_zone_balance'])
+        metrics['balance_verified'] = metrics['overall_balance'] >= 0.85
+
+        return metrics
+
+    def _final_validation(self):
+        """Final validation pass - log any remaining issues."""
+        # Check connectivity one more time
+        reachable = bfs_reachable(self.grid, self.config.spawn_point_1,
+                                 self._is_passable, self._can_traverse)
+
+        all_passable = sum(1 for y in range(self.config.height)
+                          for x in range(self.config.width)
+                          if self._is_passable(self.grid, x, y))
+
+        if len(reachable) != all_passable:
+            self.logger.warning(f"Final check: {all_passable - len(reachable)} tiles still unreachable")
+
+    # ========================================================================
+    # STATISTICS
+    # ========================================================================
+
+    def get_statistics(self) -> Dict:
+        """Get comprehensive map statistics including corrections."""
         stats = {
-            "plains": 0, "forest": 0, "urban": 0, "mountains": 0,
-            "road": 0, "highway": 0, "debris": 0,
-            "buildings": len(self.buildings),
-            "ramps": 0, "elevated": 0,
-            "control_zones": len(self.control_zones),
-            "high_ground_clusters": len(self.high_ground_clusters),
-            "choke_points": len(self.choke_points)
+            'width': self.config.width,
+            'height': self.config.height,
+            'area': self.config.area,
+            'seed': self.config.seed,
         }
+
+        # Count terrain
+        counts = {'plains': 0, 'forest': 0, 'urban': 0, 'mountains': 0,
+                 'road': 0, 'debris': 0, 'ramps': 0, 'elevated': 0}
 
         for row in self.grid:
             for t in row:
-                try:
-                    name = t.terrain_type.name.lower()
-                except Exception:
-                    name = str(t.terrain_type).lower()
-                if name in stats:
-                    stats[name] += 1
+                name = t.terrain_type.name.lower()
+                if name in counts:
+                    counts[name] += 1
                 if t.is_ramp:
-                    stats["ramps"] += 1
-                if t.elevation > MIN_ELEVATION:
-                    stats["elevated"] += 1
+                    counts['ramps'] += 1
+                if t.elevation > 0:
+                    counts['elevated'] += 1
 
-        balance_info = self._verify_balance()
-        stats.update(balance_info)
+        stats.update(counts)
+
+        # Strategic elements
+        stats['buildings'] = len(self.buildings)
+        stats['control_zones'] = len(self.control_zones)
+        stats['high_ground_clusters'] = len(self.high_ground)
+        stats['chokepoints'] = len(self.chokepoints)
+
+        # Balance metrics
+        stats.update(self._calculate_balance())
+
+        # Corrections applied
+        stats['corrections_applied'] = sum(self.corrections.values())
+        stats['correction_details'] = self.corrections.copy()
 
         return stats
 
-    def _verify_balance(self) -> Dict[str, float]:
-        """Verify algorithmic balance guarantees."""
-        if not self.buildings:
-            return {"balance_verified": True, "building_balance": 1.0}
+    def get_terrain_statistics(self) -> Dict:
+        """Legacy compatibility method."""
+        return self.get_statistics()
 
-        p1_dists = [self._manhattan_distance(self.config.spawn_point_1, (bx, by))
-                    for bx, by in self.buildings]
-        p2_dists = [self._manhattan_distance(self.config.spawn_point_2, (bx, by))
-                    for bx, by in self.buildings]
 
-        avg1 = sum(p1_dists) / len(p1_dists)
-        avg2 = sum(p2_dists) / len(p2_dists)
-
-        building_balance = min(avg1, avg2) / max(avg1, avg2) if max(avg1, avg2) > 0 else 1.0
-
-        cz_p1 = [self._manhattan_distance(self.config.spawn_point_1, cz)
-                 for cz in self.control_zones]
-        cz_p2 = [self._manhattan_distance(self.config.spawn_point_2, cz)
-                 for cz in self.control_zones]
-
-        cz_avg1 = sum(cz_p1) / len(cz_p1) if cz_p1 else 0
-        cz_avg2 = sum(cz_p2) / len(cz_p2) if cz_p2 else 0
-
-        cz_balance = min(cz_avg1, cz_avg2) / max(cz_avg1, cz_avg2) if max(cz_avg1, cz_avg2) > 0 else 1.0
-
-        verified = building_balance >= 0.85 and cz_balance >= 0.85
-
-        self.logger.info(
-            f"Balance verification: Buildings={building_balance:.3f}, "
-            f"ControlZones={cz_balance:.3f}, Verified={verified}"
-        )
-
-        return {
-            "balance_verified": verified,
-            "building_balance": building_balance,
-            "control_zone_balance": cz_balance
-        }
-
-# end of file
+# Legacy exports for backward compatibility
+MapConfig = MapConfig
