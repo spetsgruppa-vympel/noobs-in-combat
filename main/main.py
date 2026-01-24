@@ -1,6 +1,10 @@
 """
 Main entry point for Snakes in Combat.
 
+MODIFICATIONS:
+- Integrated camera update loop for menu manager
+- Proper delta time handling for smooth camera movement
+
 Initializes pygame, creates the game window, and runs the main game loop.
 Handles high-level game state management and coordinates between menu system
 and gameplay systems.
@@ -27,6 +31,7 @@ class Game:
         running: Boolean flag for main loop control
         menu_manager: MainMenuManager instance for menu UI
         game_state: Current game state ('menu', 'playing', 'paused')
+        camera: Camera instance for in-game view
     """
 
     def __init__(self):
@@ -60,6 +65,9 @@ class Game:
         self.running = True
         self.game_state = "menu"  # Possible states: 'menu', 'playing', 'paused'
 
+        # Initialize camera for gameplay
+        self.camera = None
+
         # Initialize menu system
         self.logger.info("Initializing menu manager...")
         self.menu_manager = MainMenuManager(
@@ -77,9 +85,6 @@ class Game:
         self.logger.info("Entering main game loop")
         frame_count = 0
         target_fps = 60
-
-
-        camera = Camera(screen_width=self.screen_width, screen_height=self.screen_height)
 
         while self.running:
             dt = self.clock.tick(target_fps) / 1000.0
@@ -106,38 +111,51 @@ class Game:
 
             # ===== GAME STATE CONTROL ===== #
             if self.game_state == "menu":
+                # Process menu events
                 result = self.menu_manager.process_events(events)
                 if result == "quit":
                     self.running = False
                 elif result == "start_game":
                     self.game_state = "playing"
+                    # Initialize gameplay camera
+                    self.camera = Camera(
+                        screen_width=self.screen_width,
+                        screen_height=self.screen_height
+                    )
 
+                # Update menu manager (includes camera for map preview)
+                self.menu_manager.update_camera(dt)
                 self.menu_manager.manager.update(dt)
+
+                # Draw menu
                 self.menu_manager.draw()
 
             elif self.game_state == "playing":
-
                 # --------- CAMERA INPUT HANDLING --------- #
+                if self.camera:
+                    keys = pygame.key.get_pressed()
+                    pan_speed = 300 * dt  # world units per second
 
-                keys = pygame.key.get_pressed()
-                pan_speed = 300 * dt  # world units per second
+                    # WASD panning
+                    if keys[pygame.K_w]:
+                        self.camera.pan(0, -pan_speed)
+                    if keys[pygame.K_s]:
+                        self.camera.pan(0, pan_speed)
+                    if keys[pygame.K_a]:
+                        self.camera.pan(-pan_speed, 0)
+                    if keys[pygame.K_d]:
+                        self.camera.pan(pan_speed, 0)
 
-                # WASD panning
-                if keys[pygame.K_w]: camera.pan(0, -pan_speed)
-                if keys[pygame.K_s]: camera.pan(0, pan_speed)
-                if keys[pygame.K_a]: camera.pan(-pan_speed, 0)
-                if keys[pygame.K_d]: camera.pan(pan_speed, 0)
+                    # Mouse wheel zooming
+                    for event in events:
+                        if event.type == pygame.MOUSEWHEEL:
+                            if event.y > 0:
+                                self.camera.zoom_in()
+                            else:
+                                self.camera.zoom_out()
 
-                # Mouse wheel zooming
-                for event in events:
-                    if event.type == pygame.MOUSEWHEEL:
-                        if event.y > 0:
-                            camera.zoom_in()
-                        else:
-                            camera.zoom_out()
-
-                # Smooth camera updates (follow / smooth pan)
-                camera.update(dt)
+                    # Smooth camera updates
+                    self.camera.update(dt)
 
                 # --------- GAMEPLAY UPDATE --------- #
                 # TODO: update units, AI, world, etc.
@@ -146,11 +164,9 @@ class Game:
                 self.screen.fill((0, 0, 0))  # clear screen
 
                 # Example rendering of a test point at world (0,0)
-                sx, sy = camera.world_to_screen(0, 0)
-                pygame.draw.circle(self.screen, (255, 255, 0), (int(sx), int(sy)), 8)
-
-                # Debug: viewport bounds
-                # vx_min, vy_min, vx_max, vy_max = camera.get_viewport_bounds()
+                if self.camera:
+                    sx, sy = self.camera.world_to_screen(0, 0)
+                    pygame.draw.circle(self.screen, (255, 255, 0), (int(sx), int(sy)), 8)
 
             elif self.game_state == "paused":
                 # TODO: pause menu handling

@@ -3,16 +3,17 @@ import pygame
 import pygame_gui
 import math
 from main.config import resolution_converter, get_project_root, get_logger, TILE_SIZE, MAP_WIDTH, MAP_HEIGHT
+from main.game.ui.camera import Camera, CameraMode
 
 
 class MainMenuManager:
     """
     Main menu manager with complete map generator UI and 3D preview.
 
-    NEW FEATURES:
-    - All customization sliders (Task 2)
-    - Fixed camera: WASD=move, middle-drag=rotate, wheel=zoom (Task 3)
-    - 3D buildings and 45-degree ramps (Task 4)
+    FEATURES:
+    - All customization sliders (Task 2: Complete)
+    - Fixed camera using camera.py: WASD=move, middle-drag=rotate, wheel=zoom (Task 3: Complete)
+    - 3D buildings and 45-degree ramps (Task 4: Complete)
     """
 
     logo_vertical_factor = 0.25
@@ -20,7 +21,7 @@ class MainMenuManager:
     def __init__(self, screen, screen_width, screen_height, theme=None):
         """Initialize the main menu manager."""
         self.logger = get_logger(__name__)
-        self.logger.info("Initializing MainMenuManager with full UI")
+        self.logger.info("Initializing MainMenuManager with camera system")
 
         self.all_units = []
         self.selected_unit = None
@@ -56,12 +57,10 @@ class MainMenuManager:
         self.map_generator = None
         self.current_map = None
 
-        # TASK 3: Fixed camera controls
-        self.preview_pan = [0.0, 0.0]
-        self.preview_zoom = 1.0
+        # TASK 3: Camera integration
+        self.camera = None
         self.preview_tile_size = TILE_SIZE if TILE_SIZE else 32
-        self.camera_rotation = 30.0  # degrees
-        self.camera_tilt = 0.55
+        self.camera_rotation = 30.0  # Initial rotation
         self.preview_rotating = False
         self.preview_last_mouse = (0, 0)
 
@@ -284,6 +283,7 @@ class MainMenuManager:
             self.mouse_over_preview = False
             self.map_generator = None
             self.current_map = None
+            self.camera = None
             self.camera_rotation = 30.0
             self._singleplayer_btn = None
             self._multiplayer_btn = None
@@ -556,20 +556,27 @@ class MainMenuManager:
         self.refresh_loadout_view()
 
     def mapgen_press(self, element=None):
-        """Navigate to map generator."""
+        """Navigate to map generator with camera initialization."""
         self.load_menu(self.specs['mapgen_spec'])
         self.map_preview_active = True
 
-        # Reset camera
-        self.preview_pan = [0.0, 0.0]
-        self.preview_zoom = 1.0
-        self.preview_rotating = False
-        self.camera_rotation = 30.0
-        self.camera_tilt = 0.55
-
-        # Create inspector UI
+        # TASK 3: Initialize camera system
         preview_x = int(self.screen_width * 0.22) + 10
         preview_w = self.screen_width - preview_x
+
+        self.camera = Camera(
+            screen_width=preview_w,
+            screen_height=self.screen_height,
+            start_x=self.map_size * self.preview_tile_size / 2.0,
+            start_y=self.map_size * self.preview_tile_size / 2.0,
+            zoom=1.0,
+            mode=CameraMode.ORTHOGRAPHIC
+        )
+
+        self.camera_rotation = 30.0
+        self.preview_rotating = False
+
+        # Create inspector UI
         inspector_w = 300
         inspector_x = preview_x + preview_w - inspector_w - 10
 
@@ -761,15 +768,11 @@ class MainMenuManager:
         self.map_generator = MapGenerator(config)
         self.current_map = self.map_generator.generate()
 
-        # Reset camera to center
-        map_px_w = self.map_size * self.preview_tile_size * self.preview_zoom
-        map_px_h = self.map_size * self.preview_tile_size * self.preview_zoom
-        preview_x = int(self.screen_width * 0.22) + 10
-        preview_w = self.screen_width - preview_x
-
-        self.preview_pan[0] = -(map_px_w / 2) + (preview_w / 2)
-        self.preview_pan[1] = -(map_px_h / 2) + (self.screen_height / 2)
-        self.preview_zoom = 1.0
+        # TASK 3: Reset camera to center of map
+        if self.camera:
+            map_center_world = self.map_size * self.preview_tile_size / 2.0
+            self.camera.pan_to(map_center_world, map_center_world, smooth=False)
+            self.camera.set_zoom(1.0)
 
         stats = self.map_generator.get_statistics()
         self.logger.info(f"Map generated: {stats}")
@@ -883,7 +886,7 @@ class MainMenuManager:
         self.refresh_loadout_view()
 
     def process_events(self, events):
-        """Process events."""
+        """Process events including camera controls."""
         # Update mouse position for preview
         if self.map_preview_active:
             mouse_pos = pygame.mouse.get_pos()
@@ -910,8 +913,8 @@ class MainMenuManager:
                             if result in ("map_generator", "start_game"):
                                 return result
 
-            # TASK 3: Fixed camera controls
-            if self.map_preview_active:
+            # TASK 3: Camera controls - Middle mouse rotation
+            if self.map_preview_active and self.camera:
                 # Middle mouse press (start rotating)
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 2:
                     if self.mouse_over_preview:
@@ -926,10 +929,9 @@ class MainMenuManager:
                 # Mouse wheel zoom
                 if event.type == pygame.MOUSEWHEEL and self.mouse_over_preview:
                     if event.y > 0:
-                        self.preview_zoom *= 1.12
+                        self.camera.zoom_in(steps=1)
                     else:
-                        self.preview_zoom /= 1.12
-                    self.preview_zoom = max(0.25, min(4.0, self.preview_zoom))
+                        self.camera.zoom_out(steps=1)
 
                 # Mouse motion while rotating
                 if event.type == pygame.MOUSEMOTION and self.preview_rotating:
@@ -972,42 +974,32 @@ class MainMenuManager:
         return None
 
     def update_camera(self, dt):
-        """TASK 3: Update camera with WASD movement."""
-        if not self.map_preview_active or not self.mouse_over_preview:
+        """TASK 3: Update camera with WASD movement using camera.py."""
+        if not self.map_preview_active or not self.mouse_over_preview or not self.camera:
             return
 
         keys = pygame.key.get_pressed()
-        move_speed_tiles = 8.0 * dt
+        move_speed = 300.0 * dt  # Pixels per second
 
-        dx_world = 0.0
-        dy_world = 0.0
+        # WASD camera panning
         if keys[pygame.K_w] or keys[pygame.K_UP]:
-            dy_world -= move_speed_tiles
+            self.camera.pan(0, -move_speed)
         if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-            dy_world += move_speed_tiles
+            self.camera.pan(0, move_speed)
         if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-            dx_world -= move_speed_tiles
+            self.camera.pan(-move_speed, 0)
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-            dx_world += move_speed_tiles
+            self.camera.pan(move_speed, 0)
 
-        if dx_world == 0 and dy_world == 0:
-            return
-
-        # Convert world movement to screen pixels with rotation
-        angle_rad = math.radians(self.camera_rotation)
-        tile_px = self.preview_tile_size * self.preview_zoom
-        screen_dx = (math.cos(angle_rad) * dx_world - math.sin(angle_rad) * dy_world) * tile_px
-        screen_dy = (math.sin(angle_rad) * dx_world + math.cos(angle_rad) * dy_world) * tile_px * self.camera_tilt
-
-        self.preview_pan[0] += screen_dx
-        self.preview_pan[1] += screen_dy
+        # Update camera smooth interpolation
+        self.camera.update(dt)
 
     def draw(self):
         """Draw all UI and map preview."""
         self.screen.blit(self.static_surface, (0, 0))
 
         # TASK 4: Draw 3D map preview with buildings and ramps
-        if self.map_preview_active and self.current_map is not None:
+        if self.map_preview_active and self.current_map is not None and self.camera:
             try:
                 self._draw_map_preview_3d()
             except Exception as e:
@@ -1016,7 +1008,7 @@ class MainMenuManager:
         self.manager.draw_ui(self.screen)
 
     def _draw_map_preview_3d(self):
-        """TASK 4: Render map with 3D buildings and 45-degree ramps."""
+        """TASK 4: Render map with 3D buildings and 45-degree ramps using camera.py."""
         from main.game.data.maps.terrain import plains, forest, urban, mountains, road, highway, debris
         from main.game.ui.UItheme import UITheme
 
@@ -1039,48 +1031,65 @@ class MainMenuManager:
         map_h = len(self.current_map)
         map_w = len(self.current_map[0]) if map_h > 0 else 0
 
-        tile_px = self.preview_tile_size * self.preview_zoom
-        pan_x = self.preview_pan[0]
-        pan_y = self.preview_pan[1]
-        center_x = preview_w / 2.0
-        center_y = preview_h / 2.0
+        tile_px = self.preview_tile_size * self.camera.zoom
+
+        # Camera tilt for pseudo-3D
+        camera_tilt = 0.55
 
         angle_rad = math.radians(self.camera_rotation)
         cos_a = math.cos(angle_rad)
         sin_a = math.sin(angle_rad)
 
         def project_point(wx, wy, z):
-            """Project world point to screen."""
-            ox = wx - (map_w / 2.0)
-            oy = wy - (map_h / 2.0)
-            rx = ox * cos_a - oy * sin_a
-            ry = ox * sin_a + oy * cos_a
-            sx = rx * tile_px
-            sy = ry * tile_px * self.camera_tilt
-            elev_px = z * (tile_px * 0.45)
-            sy -= elev_px
-            screen_x = center_x + sx + pan_x
-            screen_y = center_y + sy + pan_y
-            return (int(screen_x), int(screen_y))
+            """Project world point to screen using camera transform."""
+            # Convert tile coordinates to world pixels
+            world_x = wx * self.preview_tile_size
+            world_y = wy * self.preview_tile_size
+
+            # Apply elevation
+            world_z = z * (self.preview_tile_size * 0.45)
+
+            # Transform to screen using camera
+            screen_x, screen_y = self.camera.world_to_screen(world_x, world_y)
+
+            # Apply rotation
+            offset_x = screen_x - preview_w / 2.0
+            offset_y = screen_y - preview_h / 2.0
+
+            rx = offset_x * cos_a - offset_y * sin_a
+            ry = offset_x * sin_a + offset_y * cos_a
+
+            # Apply tilt and elevation
+            ry = ry * camera_tilt - world_z * self.camera.zoom
+
+            final_x = int(preview_w / 2.0 + rx)
+            final_y = int(preview_h / 2.0 + ry)
+
+            return (final_x, final_y)
 
         # Find hovered tile
         mouse_pos = pygame.mouse.get_pos()
         hovered = None
         if self.mouse_over_preview:
             mx, my = mouse_pos
-            local_x = mx - preview_x - center_x - pan_x
-            local_y = my - center_y - pan_y
-            local_y_un = local_y / (tile_px * self.camera_tilt) if tile_px * self.camera_tilt != 0 else local_y
-            inv_rx = (local_x / tile_px) if tile_px != 0 else local_x
-            inv_ry = local_y_un
-            ix = inv_rx * cos_a + inv_ry * sin_a
-            iy = -inv_rx * sin_a + inv_ry * cos_a
-            tile_x = int(math.floor(ix + (map_w / 2.0)))
-            tile_y = int(math.floor(iy + (map_h / 2.0)))
-            if 0 <= tile_x < map_w and 0 <= tile_y < map_h:
-                hovered = (tile_x, tile_y)
+            # Simple raycast to find tile under mouse
+            # Test all tiles and find closest to mouse
+            min_dist = float('inf')
+            for y in range(map_h):
+                for x in range(map_w):
+                    try:
+                        cell = self.current_map[y][x]
+                        elev = getattr(cell, "elevation", 0) or 0
+                        # Get center of tile
+                        cx, cy = project_point(x + 0.5, y + 0.5, elev)
+                        dist = math.sqrt((mx - preview_x - cx) ** 2 + (my - cy) ** 2)
+                        if dist < min_dist and dist < tile_px:
+                            min_dist = dist
+                            hovered = (x, y)
+                    except Exception:
+                        continue
 
-        # Render tiles in painter's order
+        # Render tiles in painter's order (back to front)
         render_list = []
         for y in range(map_h):
             for x in range(map_w):
@@ -1088,11 +1097,14 @@ class MainMenuManager:
                     cell = self.current_map[y][x]
                 except Exception:
                     continue
-                ox = x - (map_w / 2.0)
-                oy = y - (map_h / 2.0)
-                ry = ox * sin_a + oy * cos_a
-                depth = ry + getattr(cell, "elevation", 0) * 0.9
+
+                # Calculate depth for sorting
+                elev = getattr(cell, "elevation", 0) or 0
+                rx = (x - map_w / 2.0) * cos_a - (y - map_h / 2.0) * sin_a
+                ry = (x - map_w / 2.0) * sin_a + (y - map_h / 2.0) * cos_a
+                depth = ry + elev * 0.9
                 render_list.append((depth, x, y, cell))
+
         render_list.sort(key=lambda r: r[0])
 
         for _, x, y, cell in render_list:
@@ -1104,7 +1116,7 @@ class MainMenuManager:
             p2 = project_point(x + 1, y + 1, elev)
             p3 = project_point(x, y + 1, elev)
 
-            # Base corners
+            # Base corners (ground level)
             b0 = project_point(x, y, 0)
             b1 = project_point(x + 1, y, 0)
             b2 = project_point(x + 1, y + 1, 0)
@@ -1128,11 +1140,10 @@ class MainMenuManager:
 
             # TASK 4: Draw ramps as 45-degree slopes
             if cell.is_ramp:
-                # Draw ramp surface
                 ramp_dir = getattr(cell, 'ramp_direction', None)
                 ramp_to_elev = getattr(cell, 'ramp_elevation_to', elev + 1)
 
-                # Get top of ramp (elevated edge)
+                # Get elevated edge based on direction
                 if ramp_dir == 'north':
                     ramp_top = [project_point(x, y, ramp_to_elev), project_point(x + 1, y, ramp_to_elev)]
                     ramp_bottom = [p3, p2]
@@ -1149,7 +1160,7 @@ class MainMenuManager:
                     ramp_top = [p0, p1]
                     ramp_bottom = [p3, p2]
 
-                # Draw ramp as angled quad
+                # Draw ramp surface (angled quad)
                 ramp_color = tuple(max(0, int(c * 0.8)) for c in base_color)
                 try:
                     pygame.draw.polygon(preview_surface, ramp_color,
@@ -1161,34 +1172,39 @@ class MainMenuManager:
 
             # TASK 4: Draw buildings as 3D boxes
             elif cell.is_building:
-                building_height = 2.0  # Extra height for buildings
+                building_height = 2.0  # Extra height units
 
-                # Building top (elevated)
+                # Building top corners (elevated)
                 bt0 = project_point(x + 0.2, y + 0.2, elev + building_height)
                 bt1 = project_point(x + 0.8, y + 0.2, elev + building_height)
                 bt2 = project_point(x + 0.8, y + 0.8, elev + building_height)
                 bt3 = project_point(x + 0.2, y + 0.8, elev + building_height)
 
-                # Building base
+                # Building base corners
                 bb0 = project_point(x + 0.2, y + 0.2, elev)
                 bb1 = project_point(x + 0.8, y + 0.2, elev)
                 bb2 = project_point(x + 0.8, y + 0.8, elev)
                 bb3 = project_point(x + 0.2, y + 0.8, elev)
 
-                # Draw building walls (darker)
+                # Building colors
                 building_color = (80, 80, 100)
                 building_top_color = (100, 100, 120)
 
-                # Front wall
+                # Draw visible wall (front-facing)
                 try:
                     pts = [bt0, bt1, bt2, bt3]
                     base_pts = [bb0, bb1, bb2, bb3]
+
+                    # Find front edge (furthest back in screen space)
                     idx_sorted = sorted(range(4), key=lambda i: pts[i][1], reverse=True)
                     i1, i2 = idx_sorted[0], idx_sorted[1]
+
                     top_a = pts[i1]
                     top_b = pts[i2]
                     base_a = base_pts[i1]
                     base_b = base_pts[i2]
+
+                    # Draw wall quad
                     pygame.draw.polygon(preview_surface, building_color, [top_a, top_b, base_b, base_a])
                     pygame.draw.polygon(preview_surface, (60, 60, 80), [top_a, top_b, base_b, base_a], 1)
                 except Exception:
@@ -1209,24 +1225,28 @@ class MainMenuManager:
                     pass
 
             else:
-                # Regular tile - draw top and side
+                # Regular tile - draw top face
                 try:
                     pygame.draw.polygon(preview_surface, top_color, [p0, p1, p2, p3])
                     pygame.draw.polygon(preview_surface, UITheme.SECONDARY, [p0, p1, p2, p3], 1)
                 except Exception:
                     pass
 
-                # Draw side face
+                # Draw side face for elevated tiles
                 if elev > 0:
                     try:
                         pts = [p0, p1, p2, p3]
                         base_pts = [b0, b1, b2, b3]
+
+                        # Find visible edge
                         idx_sorted = sorted(range(4), key=lambda i: pts[i][1], reverse=True)
                         i1, i2 = idx_sorted[0], idx_sorted[1]
+
                         top_a = pts[i1]
                         top_b = pts[i2]
                         base_a = base_pts[i1]
                         base_b = base_pts[i2]
+
                         side_color = tuple(max(0, int(c * 0.55)) for c in base_color)
                         pygame.draw.polygon(preview_surface, side_color, [top_a, top_b, base_b, base_a])
                         pygame.draw.polygon(preview_surface, UITheme.SECONDARY, [top_a, top_b, base_b, base_a], 1)
@@ -1236,7 +1256,7 @@ class MainMenuManager:
             # Draw tile type label if hovered
             if is_hover:
                 try:
-                    font = pygame.font.SysFont('Arial', max(10, int(12 * self.preview_zoom)))
+                    font = pygame.font.SysFont('Arial', max(10, int(12 * self.camera.zoom)))
                     tname = getattr(cell.terrain_type, "name", str(cell.terrain_type)).capitalize()
                     cx = (p0[0] + p1[0] + p2[0] + p3[0]) // 4
                     cy = (p0[1] + p1[1] + p2[1] + p3[1]) // 4
@@ -1290,9 +1310,9 @@ class MainMenuManager:
         if self.mouse_over_preview:
             try:
                 font = pygame.font.SysFont('Arial', 14)
-                hint = f"WASD: Move | Wheel: Zoom | Middle-drag: Rotate | Angle: {int(self.camera_rotation)}°"
+                hint = f"WASD: Move | Wheel: Zoom | Middle-drag: Rotate | Angle: {int(self.camera_rotation)}° | Zoom: {self.camera.zoom:.2f}x"
                 text = font.render(hint, True, UITheme.TEXT)
-                text_rect = text.get_rect(centerx=preview_x + preview_w // 2, top=10)
+                text_rect = text.get_rect(centerx=preview_w // 2, top=10)
                 bg_rect = text_rect.inflate(20, 10)
                 pygame.draw.rect(self.screen, UITheme.PRIMARY, bg_rect)
                 pygame.draw.rect(self.screen, UITheme.SECONDARY, bg_rect, 1)
