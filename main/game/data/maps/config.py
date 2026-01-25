@@ -1,279 +1,337 @@
 """
-Enhanced MapConfig with Skeleton-Graph Road Generation.
+Map generation configuration with skeleton-graph road system.
 
-HIERARCHICAL GENERATION:
-1. Skeleton graph (highways/major roads) - sparse, strategic
-2. Rasterization (graph → tiles) - clean conversion
-3. Local road fill (constrained) - prevents parallel spam
-4. Urban/building fill (block-based) - realistic city structure
+ROAD GENERATION PHILOSOPHY:
+- Skeleton graph creates sparse, strategic highway network (1-tile wide)
+- Local roads fill in blocks with grid patterns (1-tile wide)
+- Urban blocks detected from road-enclosed regions
+- ALL ROADS ARE EXACTLY 1 TILE WIDE
+
+This configuration exposes every tunable parameter for the generation system.
 """
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Dict
+import numpy as np
 
 
 @dataclass
 class MapConfig:
-    # ---------------------------
-    # Basic map dimensions & seed
-    # ---------------------------
-    width: int = 20
-    height: int = 15
-    seed: Optional[int] = None
+    """
+    Complete map generation configuration.
 
-    # ---------------------------
-    # Global terrain density targets (REDUCED)
-    # ---------------------------
-    forest_density: float = 0.20
-    urban_density: float = 0.08
-    mountain_density: float = 0.06
-    road_density: float = 0.05
-    debris_density: float = 0.04
+    All parameters are exposed and documented for fine-tuning generation.
+    """
 
-    # ---------------------------
-    # Elevation / ramp parameters
-    # ---------------------------
-    elevation_density: float = 0.15
-    max_elevation: int = 3
-    min_support_neighbors: int = 2
-    min_ramp_neighbors: int = 1
-    ramp_placement_probability: float = 0.75
+    # ========================================================================
+    # BASIC MAP PARAMETERS
+    # ========================================================================
+
+    width: int = 20  # Map width in tiles
+    height: int = 15  # Map height in tiles
+    seed: Optional[int] = None  # Random seed (None = random)
+
+    # ========================================================================
+    # TERRAIN DENSITY TARGETS (fraction of total tiles)
+    # ========================================================================
+
+    forest_density: float = 0.20  # Forest coverage (0.0-0.6)
+    urban_density: float = 0.08  # Urban area coverage (0.0-0.4)
+    mountain_density: float = 0.06  # Mountain coverage (0.0-0.25)
+    road_density: float = 0.05  # Road coverage target (0.0-0.2)
+    debris_density: float = 0.04  # Debris coverage (0.0-0.15)
+
+    # ========================================================================
+    # ELEVATION SYSTEM
+    # ========================================================================
+
+    elevation_density: float = 0.15  # Fraction of map with elevation > 0
+    max_elevation: int = 3  # Maximum elevation level (1-5)
+    min_support_neighbors: int = 2  # Min neighbors at level N-1 to promote to N
+    min_ramp_neighbors: int = 1  # Min ramps needed to promote tile
+    ramp_placement_probability: float = 0.75  # Chance to place ramp (0.0-1.0)
 
     # Road elevation handling
-    road_elevation_bypass_threshold: int = 2
-    road_force_ramp: bool = True
-    road_max_elevation_cross: int = 1
+    road_elevation_bypass_threshold: int = 2  # Max elevation diff roads ignore
+    road_force_ramp: bool = True  # Auto-place ramps on roads
+    road_max_elevation_cross: int = 1  # Max elevation change roads can cross
 
-    # ---------------------------
-    # Strategic elements
-    # ---------------------------
-    building_density: float = 0.04
-    control_zone_count: int = 5
-    min_building_spacing: int = 3
+    # ========================================================================
+    # STRATEGIC ELEMENTS
+    # ========================================================================
+
+    building_density: float = 0.04  # Building coverage (0.0-0.2)
+    control_zone_count: int = 5  # Number of control zones (3-11, prefer odd)
+    min_building_spacing: int = 3  # Min tiles between buildings
 
     # Building distribution
-    building_heat_influence: float = 0.6
-    building_variety_bonus: float = 0.4
+    building_heat_influence: float = 0.6  # Heat map influence on buildings
+    building_variety_bonus: float = 0.4  # Bonus for building diversity
 
-    # ---------------------------
-    # Smoothing and clustering
-    # ---------------------------
-    smoothing_passes: int = 2
-    cluster_min_size: int = 3
+    # ========================================================================
+    # SMOOTHING AND CLUSTERING
+    # ========================================================================
 
-    # ---------------------------
-    # Biome generation (DYNAMIC SIZING)
-    # ---------------------------
-    biome_count_min: int = 2
-    biome_count_max: int = 4
-    biome_noise_scale: float = 0.07
-    biome_noise_octaves: int = 2
+    smoothing_passes: int = 2  # Terrain smoothing iterations (0-6)
+    cluster_min_size: int = 3  # Min cluster size before removal
 
-    # Heat-based biome sizing
-    biome_min_radius: int = 4
-    biome_heat_scaling: bool = True
-    biome_heat_scale_factor: float = 0.5
+    # ========================================================================
+    # BIOME GENERATION
+    # ========================================================================
 
-    # ---------------------------
-    # SKELETON GRAPH GENERATION (NEW)
-    # ---------------------------
+    biome_count_min: int = 2  # Minimum biomes (1-6)
+    biome_count_max: int = 4  # Maximum biomes (min-8)
+    biome_noise_scale: float = 0.07  # Noise scale for blending (0.0-1.0)
+    biome_noise_octaves: int = 2  # Noise octaves (1-6)
+    biome_min_radius: int = 4  # Minimum biome radius in tiles
+    biome_heat_scaling: bool = True  # Scale biome size with heat
+    biome_heat_scale_factor: float = 0.5  # Heat scaling strength (0.0-1.0)
 
-    # Node generation
-    use_skeleton_graph: bool = True                    # Enable skeleton-graph system
-    node_generation_method: str = "poisson_disc"       # "poisson_disc", "grid_noise", "city_districts"
-    node_min_spacing: int = -1                         # Auto-calculate if -1 (based on map size)
-    node_count_target: int = -1                        # Auto-calculate if -1
+    # ========================================================================
+    # SKELETON GRAPH - NODE GENERATION
+    # ========================================================================
 
-    # Skeleton graph construction
-    skeleton_method: str = "delaunay_mst"              # "delaunay_mst", "astar_mesh"
-    skeleton_extra_edges: float = 0.15                 # % of MST edges to add back for loops
-    skeleton_straightness_bias: float = 0.90           # Prefer straight skeleton edges
+    use_skeleton_graph: bool = True  # Enable skeleton graph system
 
-    # Highway rasterization
-    highway_width: int = 2
-    highway_rasterization_method: str = "antialiased" # "bresenham", "antialiased", "spline"
-    highway_curve_smoothing: bool = True               # Smooth sharp corners
+    # Node placement method: "poisson_disc", "grid_noise", "city_districts"
+    node_generation_method: str = "poisson_disc"
 
-    # Local road generation (constrained)
-    generate_local_roads: bool = True
-    local_road_density: float = 0.12                   # Target % of tiles as local roads
-    local_road_min_spacing: int = 3                    # Min tiles between parallel local roads
-    local_road_to_highway_spacing: int = 2             # Min tiles from local to highway
-    local_road_intersection_portals: bool = True       # Locals can only join highways at portals
-    local_road_portal_spacing: int = 8                 # Distance between allowed portals
+    # Node spacing (-1 = auto-calculate from map size)
+    node_min_spacing: int = -1
 
-    # Local road fill strategy
-    local_fill_method: str = "block_subdivision"       # "cellular_walker", "astar_pois", "block_subdivision"
-    local_road_hierarchy: bool = True                  # Create collectors vs residential roads
+    # Target node count (-1 = auto-calculate from map size)
+    node_count_target: int = -1
 
-    # ---------------------------
-    # Urban center generation (BLOCK-BASED)
-    # ---------------------------
-    urban_generation_method: str = "block_fill"        # "block_fill", "road_growth"
-    urban_block_fill_density: float = 0.6              # % of blocks to fill with urban
-    urban_block_min_size: int = 4                      # Minimum block size to urbanize
-    urban_building_in_block_chance: float = 0.3        # Chance of building in urban block
+    # Node placement acceptance probability range
+    node_heat_preference: float = 0.5  # Prefer heat=0.5 (moderate zones)
+    node_heat_tolerance: float = 0.3  # Acceptance range around preference
 
-    # ---------------------------
-    # Heat map configuration
-    # ---------------------------
-    use_heat_map: bool = True
-    heat_decay_rate: float = 0.15
-    heat_influence_radius: int = -1
+    # ========================================================================
+    # SKELETON GRAPH - GRAPH CONSTRUCTION
+    # ========================================================================
 
-    # ---------------------------
-    # Legacy road parameters (DEPRECATED - kept for compatibility)
-    # ---------------------------
-    city_base_count: float = 0.001
-    city_growth_factor: float = 0.4
-    city_max_fraction_of_area: float = 0.04
-    urban_center_road_bias: float = 0.8
-    urban_cluster_tightness: float = 0.7
-    urban_building_density: float = 0.3
-    highway_factor: float = 0.0012
-    highway_straightness_bias: float = 0.85
-    highway_max_turns: int = 3
-    road_urban_bias: float = 2.5
-    road_adjacency_prevention: bool = True
-    road_min_spacing: int = 2
+    # Construction method: "delaunay_mst", "nearest_neighbor", "astar_mesh"
+    skeleton_method: str = "delaunay_mst"
 
-    # ---------------------------
-    # Diagonal road discouragement
-    # ---------------------------
-    discourage_diagonal_roads: bool = True
-    diagonal_road_penalty: float = 0.85
-    keep_city_diagonal_roads: bool = False
-    diagonal_detection_radius: int = 1
+    # Edges to add back after MST (creates loops) (0.0-0.5)
+    skeleton_extra_edges: float = 0.15
 
-    # ---------------------------
-    # Pathfinding & performance
-    # ---------------------------
-    smoothing_enabled: bool = True
-    seed_retry_attempts: int = 100
+    # Prefer straight edges (1.0 = strong preference) (0.0-1.0)
+    skeleton_straightness_bias: float = 0.90
 
-    # ---------------------------
-    # Spawn points
-    # ---------------------------
+    # Penalize diagonal edges (higher = stronger penalty) (1.0-3.0)
+    skeleton_diagonal_penalty: float = 1.5
+
+    # K-nearest neighbors for local connectivity (2-8)
+    skeleton_k_nearest: int = 4
+
+    # ========================================================================
+    # SKELETON GRAPH - RASTERIZATION (1-TILE WIDE)
+    # ========================================================================
+
+    # Rasterization method: "bresenham", "straight_only"
+    highway_rasterization_method: str = "bresenham"
+
+    # Smooth sharp corners in skeleton edges
+    highway_curve_smoothing: bool = True
+
+    # Corner smoothing radius (tiles)
+    highway_corner_radius: int = 2
+
+    # IMPORTANT: All skeleton roads are EXACTLY 1 tile wide
+    # No width parameter - this ensures strategic, sparse networks
+
+    # ========================================================================
+    # LOCAL ROADS (CONSTRAINED, 1-TILE WIDE)
+    # ========================================================================
+
+    generate_local_roads: bool = True  # Enable local road generation
+
+    # Local road density target (fraction of non-highway tiles)
+    local_road_density: float = 0.08  # (0.0-0.15)
+
+    # Minimum spacing between parallel local roads
+    local_road_min_spacing: int = 3  # (2-8 tiles)
+
+    # Minimum distance from local roads to highways
+    local_road_to_highway_spacing: int = 2  # (1-5 tiles)
+
+    # Can local roads only connect at designated portals?
+    local_road_intersection_portals: bool = True
+
+    # Spacing between highway connection portals
+    local_road_portal_spacing: int = 8  # (4-20 tiles)
+
+    # Local road generation method: "block_grid", "random_walk"
+    local_fill_method: str = "block_grid"
+
+    # Block subdivision for grid method
+    local_grid_spacing: int = 5  # Grid spacing in tiles (3-10)
+
+    # ========================================================================
+    # URBAN BLOCK GENERATION
+    # ========================================================================
+
+    # Urban generation method: "block_fill", "road_growth"
+    urban_generation_method: str = "block_fill"
+
+    # Fraction of suitable blocks to urbanize (0.0-1.0)
+    urban_block_fill_density: float = 0.6
+
+    # Minimum block size to consider for urbanization
+    urban_block_min_size: int = 4  # (3-15 tiles)
+
+    # Chance to place building in urban block tile (0.0-1.0)
+    urban_building_in_block_chance: float = 0.3
+
+    # Urban preference for high-heat areas
+    urban_heat_bias: float = 0.7  # (0.0-1.0)
+
+    # ========================================================================
+    # HEAT MAP CONFIGURATION
+    # ========================================================================
+
+    use_heat_map: bool = True  # Enable heat map generation
+    heat_decay_rate: float = 0.15  # Heat decay rate (0.05-0.5)
+    heat_influence_radius: int = -1  # Heat influence radius (-1 = auto)
+
+    # ========================================================================
+    # PATHFINDING AND PERFORMANCE
+    # ========================================================================
+
+    smoothing_enabled: bool = True  # Enable terrain smoothing
+    seed_retry_attempts: int = 100  # Max retries for element placement
+
+    # ========================================================================
+    # SPAWN POINTS
+    # ========================================================================
+
     spawn_point_1: Optional[Tuple[int, int]] = None
     spawn_point_2: Optional[Tuple[int, int]] = None
 
-    # ---------------------------
-    # Biome definitions override
-    # ---------------------------
+    # ========================================================================
+    # ADVANCED: BIOME DEFINITIONS OVERRIDE
+    # ========================================================================
+
     biome_definitions: Optional[List[Dict]] = field(default=None)
 
+    # ========================================================================
+    # VALIDATION AND AUTO-CALCULATION
+    # ========================================================================
+
     def __post_init__(self):
-        """Validate and clamp config values."""
-        # Clamp dimensions
-        self.width = max(8, min(256, self.width))
-        self.height = max(8, min(256, self.height))
+        """Validate and auto-calculate configuration values."""
 
-        # Clamp densities
-        self.forest_density = max(0.0, min(0.6, self.forest_density))
-        self.urban_density = max(0.0, min(0.4, self.urban_density))
-        self.mountain_density = max(0.0, min(0.25, self.mountain_density))
-        self.road_density = max(0.0, min(0.2, self.road_density))
-        self.debris_density = max(0.0, min(0.15, self.debris_density))
-        self.elevation_density = max(0.0, min(0.6, self.elevation_density))
-        self.building_density = max(0.0, min(0.2, self.building_density))
+        # Helper for integer clipping with type preservation
+        def clip_int(value, lo, hi):
+            return int(np.clip(value, lo, hi))
 
-        # Elevation params
-        self.max_elevation = max(1, min(5, self.max_elevation))
-        self.min_support_neighbors = max(1, min(4, self.min_support_neighbors))
-        self.min_ramp_neighbors = max(0, min(3, self.min_ramp_neighbors))
-        self.ramp_placement_probability = max(0.0, min(1.0, self.ramp_placement_probability))
+        # Helper for float clipping
+        def clip_float(value, lo, hi):
+            return float(np.clip(value, lo, hi))
 
-        # Road elevation
-        self.road_elevation_bypass_threshold = max(1, min(5, self.road_elevation_bypass_threshold))
-        self.road_max_elevation_cross = max(0, min(3, self.road_max_elevation_cross))
+        # Clamp basic dimensions
+        self.width = clip_int(self.width, 8, 256)
+        self.height = clip_int(self.height, 8, 256)
+
+        # Clamp densities (use numpy.clip for concise clamping)
+        self.forest_density = clip_float(self.forest_density, 0.0, 0.6)
+        self.urban_density = clip_float(self.urban_density, 0.0, 0.4)
+        self.mountain_density = clip_float(self.mountain_density, 0.0, 0.25)
+        self.road_density = clip_float(self.road_density, 0.0, 0.2)
+        self.debris_density = clip_float(self.debris_density, 0.0, 0.15)
+        self.elevation_density = clip_float(self.elevation_density, 0.0, 0.6)
+        self.building_density = clip_float(self.building_density, 0.0, 0.2)
+
+        # Elevation parameters
+        self.max_elevation = clip_int(self.max_elevation, 1, 5)
+        self.min_support_neighbors = clip_int(self.min_support_neighbors, 1, 4)
+        self.min_ramp_neighbors = clip_int(self.min_ramp_neighbors, 0, 3)
+        self.ramp_placement_probability = clip_float(self.ramp_placement_probability, 0.0, 1.0)
+        self.road_elevation_bypass_threshold = clip_int(self.road_elevation_bypass_threshold, 1, 5)
+        self.road_max_elevation_cross = clip_int(self.road_max_elevation_cross, 0, 3)
 
         # Control zones (prefer odd)
         if self.control_zone_count % 2 == 0:
             self.control_zone_count += 1
-        self.control_zone_count = max(3, min(11, self.control_zone_count))
+        self.control_zone_count = clip_int(self.control_zone_count, 3, 11)
 
         # Spacing and smoothing
-        self.min_building_spacing = max(2, min(6, self.min_building_spacing))
-        self.smoothing_passes = max(0, min(6, self.smoothing_passes))
-        self.cluster_min_size = max(1, min(12, self.cluster_min_size))
+        self.min_building_spacing = clip_int(self.min_building_spacing, 2, 6)
+        self.smoothing_passes = clip_int(self.smoothing_passes, 0, 6)
+        self.cluster_min_size = clip_int(self.cluster_min_size, 1, 12)
 
         # Building distribution
-        self.building_heat_influence = max(0.0, min(1.0, self.building_heat_influence))
-        self.building_variety_bonus = max(0.0, min(1.0, self.building_variety_bonus))
+        self.building_heat_influence = clip_float(self.building_heat_influence, 0.0, 1.0)
+        self.building_variety_bonus = clip_float(self.building_variety_bonus, 0.0, 1.0)
 
         # Biomes
-        self.biome_count_min = max(1, min(6, self.biome_count_min))
-        self.biome_count_max = max(self.biome_count_min, min(8, self.biome_count_max))
-        self.biome_noise_scale = max(0.0, min(1.0, self.biome_noise_scale))
-        self.biome_noise_octaves = max(1, min(6, self.biome_noise_octaves))
-        self.biome_min_radius = max(3, min(20, self.biome_min_radius))
-        self.biome_heat_scale_factor = max(0.0, min(1.0, self.biome_heat_scale_factor))
+        self.biome_count_min = clip_int(self.biome_count_min, 1, 6)
+        self.biome_count_max = max(self.biome_count_min, clip_int(self.biome_count_max, 1, 8))
+        self.biome_noise_scale = clip_float(self.biome_noise_scale, 0.0, 1.0)
+        self.biome_noise_octaves = clip_int(self.biome_noise_octaves, 1, 6)
+        self.biome_min_radius = clip_int(self.biome_min_radius, 3, 20)
+        self.biome_heat_scale_factor = clip_float(self.biome_heat_scale_factor, 0.0, 1.0)
 
-        # Skeleton graph
+        # Auto-calculate skeleton graph parameters
         if self.node_min_spacing == -1:
-            # Auto-calculate: ~5-8% of average dimension
+            # ~6-8% of average dimension
             avg_dim = (self.width + self.height) / 2
             self.node_min_spacing = max(6, int(avg_dim * 0.07))
         else:
-            self.node_min_spacing = max(4, min(30, self.node_min_spacing))
+            self.node_min_spacing = clip_int(self.node_min_spacing, 4, 30)
 
         if self.node_count_target == -1:
-            # Auto-calculate based on map area and spacing
+            # Based on map area and spacing
             area = self.width * self.height
             self.node_count_target = max(4, int(area / (self.node_min_spacing ** 2)))
         else:
-            self.node_count_target = max(3, min(50, self.node_count_target))
+            self.node_count_target = clip_int(self.node_count_target, 3, 50)
 
-        self.skeleton_extra_edges = max(0.0, min(0.5, self.skeleton_extra_edges))
-        self.skeleton_straightness_bias = max(0.0, min(1.0, self.skeleton_straightness_bias))
+        # Skeleton graph parameters
+        self.skeleton_extra_edges = clip_float(self.skeleton_extra_edges, 0.0, 0.5)
+        self.skeleton_straightness_bias = clip_float(self.skeleton_straightness_bias, 0.0, 1.0)
+        self.skeleton_diagonal_penalty = clip_float(self.skeleton_diagonal_penalty, 1.0, 3.0)
+        self.skeleton_k_nearest = clip_int(self.skeleton_k_nearest, 2, 8)
+        self.node_heat_preference = clip_float(self.node_heat_preference, 0.0, 1.0)
+        self.node_heat_tolerance = clip_float(self.node_heat_tolerance, 0.0, 1.0)
 
-        self.highway_width = max(1, min(6, self.highway_width))
+        # Highway rasterization
+        self.highway_corner_radius = clip_int(self.highway_corner_radius, 1, 5)
 
         # Local roads
-        self.local_road_density = max(0.0, min(0.1, self.local_road_density))
-        self.local_road_min_spacing = max(2, min(8, self.local_road_min_spacing))
-        self.local_road_to_highway_spacing = max(1, min(5, self.local_road_to_highway_spacing))
-        self.local_road_portal_spacing = max(4, min(20, self.local_road_portal_spacing))
+        self.local_road_density = clip_float(self.local_road_density, 0.0, 0.15)
+        self.local_road_min_spacing = clip_int(self.local_road_min_spacing, 2, 8)
+        self.local_road_to_highway_spacing = clip_int(self.local_road_to_highway_spacing, 1, 5)
+        self.local_road_portal_spacing = clip_int(self.local_road_portal_spacing, 4, 20)
+        self.local_grid_spacing = clip_int(self.local_grid_spacing, 3, 10)
 
         # Urban blocks
-        self.urban_block_fill_density = max(0.0, min(1.0, self.urban_block_fill_density))
-        self.urban_block_min_size = max(3, min(15, self.urban_block_min_size))
-        self.urban_building_in_block_chance = max(0.0, min(1.0, self.urban_building_in_block_chance))
-
-        # Legacy params
-        self.city_base_count = max(0.0001, min(0.01, self.city_base_count))
-        self.city_growth_factor = max(0.0, min(1.5, self.city_growth_factor))
-        self.city_max_fraction_of_area = max(0.01, min(0.25, self.city_max_fraction_of_area))
-        self.urban_center_road_bias = max(0.0, min(1.0, self.urban_center_road_bias))
-        self.urban_cluster_tightness = max(0.0, min(1.0, self.urban_cluster_tightness))
-        self.urban_building_density = max(0.0, min(1.0, self.urban_building_density))
-        self.highway_straightness_bias = max(0.0, min(1.0, self.highway_straightness_bias))
-        self.highway_max_turns = max(1, min(10, self.highway_max_turns))
-        self.road_urban_bias = max(0.0, min(10.0, self.road_urban_bias))
-        self.road_min_spacing = max(1, min(5, self.road_min_spacing))
-        self.diagonal_road_penalty = max(0.0, min(1.0, self.diagonal_road_penalty))
-        self.diagonal_detection_radius = max(1, min(3, self.diagonal_detection_radius))
+        self.urban_block_fill_density = clip_float(self.urban_block_fill_density, 0.0, 1.0)
+        self.urban_block_min_size = clip_int(self.urban_block_min_size, 3, 15)
+        self.urban_building_in_block_chance = clip_float(self.urban_building_in_block_chance, 0.0, 1.0)
+        self.urban_heat_bias = clip_float(self.urban_heat_bias, 0.0, 1.0)
 
         # Heat map
-        self.heat_decay_rate = max(0.05, min(0.5, self.heat_decay_rate))
+        self.heat_decay_rate = clip_float(self.heat_decay_rate, 0.05, 0.5)
         if self.heat_influence_radius == -1:
             self.heat_influence_radius = max(self.width, self.height) // 2
 
-        # Validate skeleton methods
+        # Validate method strings (keep as-is if invalid)
         valid_node_methods = ["poisson_disc", "grid_noise", "city_districts"]
         if self.node_generation_method not in valid_node_methods:
             self.node_generation_method = "poisson_disc"
 
-        valid_skeleton_methods = ["delaunay_mst", "astar_mesh"]
+        valid_skeleton_methods = ["delaunay_mst", "nearest_neighbor", "astar_mesh"]
         if self.skeleton_method not in valid_skeleton_methods:
             self.skeleton_method = "delaunay_mst"
 
-        valid_raster_methods = ["bresenham", "antialiased", "spline"]
+        valid_raster_methods = ["bresenham", "straight_only"]
         if self.highway_rasterization_method not in valid_raster_methods:
-            self.highway_rasterization_method = "antialiased"
+            self.highway_rasterization_method = "bresenham"
 
-        valid_fill_methods = ["cellular_walker", "astar_pois", "block_subdivision"]
+        valid_fill_methods = ["block_grid", "random_walk"]
         if self.local_fill_method not in valid_fill_methods:
-            self.local_fill_method = "block_subdivision"
+            self.local_fill_method = "block_grid"
 
         valid_urban_methods = ["block_fill", "road_growth"]
         if self.urban_generation_method not in valid_urban_methods:
@@ -285,17 +343,15 @@ class MapConfig:
         if self.spawn_point_2 is None:
             self.spawn_point_2 = (5 * self.width // 6, 5 * self.height // 6)
 
-        # Validate spawn points
-        self.spawn_point_1 = (
-            max(0, min(self.width - 1, self.spawn_point_1[0])),
-            max(0, min(self.height - 1, self.spawn_point_1[1])),
-        )
-        self.spawn_point_2 = (
-            max(0, min(self.width - 1, self.spawn_point_2[0])),
-            max(0, min(self.height - 1, self.spawn_point_2[1])),
-        )
+        # Validate spawn points (use numpy.clip for clarity)
+        x1 = int(np.clip(self.spawn_point_1[0], 0, self.width - 1))
+        y1 = int(np.clip(self.spawn_point_1[1], 0, self.height - 1))
+        x2 = int(np.clip(self.spawn_point_2[0], 0, self.width - 1))
+        y2 = int(np.clip(self.spawn_point_2[1], 0, self.height - 1))
+        self.spawn_point_1 = (x1, y1)
+        self.spawn_point_2 = (x2, y2)
 
     @property
     def area(self) -> int:
-        """Total map area."""
+        """Total map area in tiles."""
         return self.width * self.height
