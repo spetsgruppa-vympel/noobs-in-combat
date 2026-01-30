@@ -2,6 +2,7 @@ import os
 import pygame
 import pygame_gui
 import math
+import threading
 from main.config import resolution_converter, get_project_root, get_logger, TILE_SIZE, MAP_WIDTH, MAP_HEIGHT
 from main.game.ui.camera import Camera, CameraMode
 
@@ -11,9 +12,10 @@ class MainMenuManager:
     Main menu manager with complete map generator UI and 3D preview.
 
     FEATURES:
-    - All customization sliders (Task 2: Complete)
-    - Fixed camera using camera.py: WASD=move, middle-drag=rotate, wheel=zoom (Task 3: Complete)
-    - 3D buildings and 45-degree ramps (Task 4: Complete)
+    - All customization sliders with debounced generation
+    - Fixed camera using camera.py: WASD=move, middle-drag=rotate, wheel=zoom
+    - 3D buildings and 45-degree ramps
+    - No freezing on slider interaction
     """
 
     logo_vertical_factor = 0.25
@@ -57,10 +59,18 @@ class MainMenuManager:
         self.map_generator = None
         self.current_map = None
 
+        # TASK 1: Debouncing and generation state
+        self.generation_pending = False
+        self.generation_timer = 0.0
+        self.generation_delay = 0.5  # seconds before triggering generation
+        self.is_generating = False
+        self.generation_thread = None
+        self.pending_config_params = None
+
         # TASK 3: Camera integration
         self.camera = None
         self.preview_tile_size = TILE_SIZE if TILE_SIZE else 32
-        self.camera_rotation = 30.0  # Initial rotation
+        self.camera_rotation = 30.0
         self.preview_rotating = False
         self.preview_last_mouse = (0, 0)
 
@@ -73,6 +83,11 @@ class MainMenuManager:
 
         self.ui_elements = []
         self.element_callbacks = {}
+
+        # TASK 2: Dynamic settings panel
+        self.advanced_settings_panel = None
+        self.advanced_settings_visible = False
+        self.dynamic_settings_elements = {}
 
         self._load_units()
         self.logger.info("Creating main menu...")
@@ -100,6 +115,7 @@ class MainMenuManager:
                 Medium_Machine_Gunner, Sniper_Team, Recon_Tank, Battle_Tank,
                 IFV, APC, Supply_Carrier, Supply_Truck, Mobile_Howitzer
             ]
+            self.logger.info(f"Loaded {len(self.all_units)} unit types")
         except Exception as e:
             self.logger.error(f"Failed to load units: {e}")
             self.all_units = []
@@ -167,6 +183,7 @@ class MainMenuManager:
             "dropdown": elements.UIDropDownMenu,
             "panel": elements.UIPanel,
             "textbox": elements.UITextBox,
+            "text_entry": elements.UITextEntryLine,
             "confirmation_dialog": windows.UIConfirmationDialog
         }
 
@@ -292,6 +309,22 @@ class MainMenuManager:
             self.menu_panel = None
             self._quit_dialog = None
             self.element_callbacks.clear()
+
+            # Clear generation state
+            self.generation_pending = False
+            self.generation_timer = 0.0
+            self.is_generating = False
+            self.pending_config_params = None
+
+            # Clear advanced settings
+            if self.advanced_settings_panel:
+                try:
+                    self.advanced_settings_panel.kill()
+                except Exception:
+                    pass
+            self.advanced_settings_panel = None
+            self.advanced_settings_visible = False
+            self.dynamic_settings_elements.clear()
 
     def create_main_menu(self):
         """Build menu specifications."""
@@ -426,7 +459,7 @@ class MainMenuManager:
             ]
         }
 
-        # TASK 2: Complete map generator UI with ALL settings
+        # Map generator UI (basic sliders)
         mapgen_controls_w = int(self.screen_width * 0.22)
 
         y_pos = 60
@@ -446,11 +479,11 @@ class MainMenuManager:
 
         # Terrain density sliders
         terrain_settings = [
-            ("forest", "Forest", 0.25, (0.0, 0.5)),
-            ("urban", "Urban", 0.15, (0.0, 0.3)),
-            ("mountain", "Mountain", 0.10, (0.0, 0.25)),
-            ("road", "Road", 0.06, (0.0, 0.15)),
-            ("debris", "Debris", 0.05, (0.0, 0.1)),
+            ("forest", "Forest", 0.20, (0.0, 0.6)),
+            ("urban", "Urban", 0.08, (0.0, 0.4)),
+            ("mountain", "Mountain", 0.06, (0.0, 0.25)),
+            ("road", "Road", 0.05, (0.0, 0.2)),
+            ("debris", "Debris", 0.04, (0.0, 0.15)),
         ]
 
         for setting_id, label, default, value_range in terrain_settings:
@@ -465,9 +498,9 @@ class MainMenuManager:
         # Elevation settings
         children.extend([
             {"type": "label", "id": "elevation_label", "rect": [10, y_pos, mapgen_controls_w - 20, 20],
-             "text": "Elevation: 20%"},
+             "text": "Elevation: 15%"},
             {"type": "slider", "id": "elevation_slider", "rect": [10, y_pos + 25, mapgen_controls_w - 20, 20],
-             "start_value": 0.20, "value_range": (0.0, 0.4), "callback": "elevation_changed"},
+             "start_value": 0.15, "value_range": (0.0, 0.6), "callback": "elevation_changed"},
         ])
         y_pos += spacing
 
@@ -482,9 +515,9 @@ class MainMenuManager:
         # Building settings
         children.extend([
             {"type": "label", "id": "building_label", "rect": [10, y_pos, mapgen_controls_w - 20, 20],
-             "text": "Buildings: 8%"},
+             "text": "Buildings: 4%"},
             {"type": "slider", "id": "building_slider", "rect": [10, y_pos + 25, mapgen_controls_w - 20, 20],
-             "start_value": 0.08, "value_range": (0.0, 0.2), "callback": "building_changed"},
+             "start_value": 0.04, "value_range": (0.0, 0.2), "callback": "building_changed"},
         ])
         y_pos += spacing
 
@@ -501,21 +534,28 @@ class MainMenuManager:
             {"type": "label", "id": "smoothing_label", "rect": [10, y_pos, mapgen_controls_w - 20, 20],
              "text": "Smoothing: 2"},
             {"type": "slider", "id": "smoothing_slider", "rect": [10, y_pos + 25, mapgen_controls_w - 20, 20],
-             "start_value": 2.0, "value_range": (0.0, 5.0), "callback": "smoothing_changed"},
+             "start_value": 2.0, "value_range": (0.0, 6.0), "callback": "smoothing_changed"},
         ])
         y_pos += spacing + 10
 
         # Generate button
         children.extend([
             {"type": "button", "id": "generate_map_btn", "rect": [10, y_pos, mapgen_controls_w - 20, 40],
-             "text": "Generate Map", "callback": "generate_map"},
+             "text": "Generate Map", "callback": "generate_map_immediately"},
         ])
         y_pos += 50
 
+        # Advanced settings button (TASK 2)
+        children.extend([
+            {"type": "button", "id": "advanced_settings_btn", "rect": [10, y_pos, mapgen_controls_w - 20, 35],
+             "text": "Advanced Settings (\\)", "callback": "toggle_advanced_settings"},
+        ])
+        y_pos += 45
+
         # Instructions
         children.extend([
-            {"type": "textbox", "id": "mapgen_instructions", "rect": [10, y_pos, mapgen_controls_w - 20, 180],
-             "html_text": "<b>Controls:</b><br>WASD: Move camera<br>Wheel: Zoom<br>Middle-drag: Rotate<br><br><b>3D View</b><br>• Buildings shown as boxes<br>• Ramps shown as slopes"},
+            {"type": "textbox", "id": "mapgen_instructions", "rect": [10, y_pos, mapgen_controls_w - 20, 140],
+             "html_text": "<b>Controls:</b><br>WASD: Move camera<br>Wheel: Zoom<br>Middle-drag: Rotate<br>\\: Advanced settings<br><br><b>3D View</b><br>• Buildings shown as boxes<br>• Ramps shown as slopes"},
         ])
 
         children.append(back_btn())
@@ -533,18 +573,22 @@ class MainMenuManager:
     # Callback methods
     def singleplayer_press(self, element=None):
         """Navigate to singleplayer."""
+        self.logger.info("Navigating to singleplayer menu")
         self.load_menu(self.specs['singleplayer_main_spec'])
 
     def multiplayer_press(self, element=None):
         """Multiplayer (not implemented)."""
+        self.logger.info("Multiplayer button pressed (not implemented)")
         pass
 
     def start_game_press(self, element=None):
         """Start game."""
+        self.logger.info("Start game pressed")
         pass
 
     def loadout_press(self, element=None):
         """Navigate to loadout menu."""
+        self.logger.info("Navigating to loadout menu")
         self.load_menu(self.specs['loadout_spec'])
         dd = getattr(self, "unit_dropdown", None)
         if dd and self.all_units:
@@ -557,10 +601,11 @@ class MainMenuManager:
 
     def mapgen_press(self, element=None):
         """Navigate to map generator with camera initialization."""
+        self.logger.info("Navigating to map generator")
         self.load_menu(self.specs['mapgen_spec'])
         self.map_preview_active = True
 
-        # TASK 3: Initialize camera system
+        # Initialize camera system
         preview_x = int(self.screen_width * 0.22) + 10
         preview_w = self.screen_width - preview_x
 
@@ -600,11 +645,11 @@ class MainMenuManager:
         except Exception as e:
             self.logger.warning(f"Failed to create inspector: {e}")
 
-        self.generate_map()
+        self.generate_map_immediately()
 
-    # TASK 2: All slider change handlers
+    # TASK 1: Debounced slider handlers
     def map_size_changed(self, element=None):
-        """Handle map size change."""
+        """Handle map size change with debouncing."""
         if element:
             size = int(round(element.get_current_value()))
             self.map_size = max(20, min(100, size))
@@ -614,7 +659,8 @@ class MainMenuManager:
                     label.set_text(f"Map Size: {self.map_size}")
                 except Exception:
                     pass
-            self.generate_map()
+            # TASK 1: Schedule generation instead of immediate
+            self._schedule_generation()
 
     def forest_changed(self, element=None):
         """Handle forest density change."""
@@ -626,6 +672,7 @@ class MainMenuManager:
                     label.set_text(f"Forest: {int(val * 100)}%")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def urban_changed(self, element=None):
         """Handle urban density change."""
@@ -637,6 +684,7 @@ class MainMenuManager:
                     label.set_text(f"Urban: {int(val * 100)}%")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def mountain_changed(self, element=None):
         """Handle mountain density change."""
@@ -648,6 +696,7 @@ class MainMenuManager:
                     label.set_text(f"Mountain: {int(val * 100)}%")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def road_changed(self, element=None):
         """Handle road density change."""
@@ -659,6 +708,7 @@ class MainMenuManager:
                     label.set_text(f"Road: {int(val * 100)}%")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def debris_changed(self, element=None):
         """Handle debris density change."""
@@ -670,6 +720,7 @@ class MainMenuManager:
                     label.set_text(f"Debris: {int(val * 100)}%")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def elevation_changed(self, element=None):
         """Handle elevation density change."""
@@ -681,6 +732,7 @@ class MainMenuManager:
                     label.set_text(f"Elevation: {int(val * 100)}%")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def max_elev_changed(self, element=None):
         """Handle max elevation change."""
@@ -692,6 +744,7 @@ class MainMenuManager:
                     label.set_text(f"Max Elevation: {val}")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def building_changed(self, element=None):
         """Handle building density change."""
@@ -703,12 +756,12 @@ class MainMenuManager:
                     label.set_text(f"Buildings: {int(val * 100)}%")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def control_zones_changed(self, element=None):
         """Handle control zones change."""
         if element:
             val = int(round(element.get_current_value()))
-            # Make odd
             if val % 2 == 0:
                 val += 1
             label = getattr(self, "control_zones_label", None)
@@ -717,6 +770,7 @@ class MainMenuManager:
                     label.set_text(f"Control Zones: {val}")
                 except Exception:
                     pass
+            self._schedule_generation()
 
     def smoothing_changed(self, element=None):
         """Handle smoothing change."""
@@ -728,13 +782,47 @@ class MainMenuManager:
                     label.set_text(f"Smoothing: {val}")
                 except Exception:
                     pass
+            self._schedule_generation()
 
-    def generate_map(self, element=None):
-        """Generate map with current settings."""
-        from main.game.data.maps.config import MapConfig
-        from main.game.data.maps.mapGen import MapGenerator
+    # TASK 1: Debouncing system
+    def _schedule_generation(self):
+        """Schedule map generation after delay (debouncing)."""
+        self.generation_pending = True
+        self.generation_timer = self.generation_delay
+        self.logger.debug("Map generation scheduled")
+
+    def _update_generation_timer(self, dt):
+        """Update generation timer and trigger if ready."""
+        if self.generation_pending and not self.is_generating:
+            self.generation_timer -= dt
+            if self.generation_timer <= 0:
+                self.generation_pending = False
+                self.logger.info("Generation timer expired - triggering map generation")
+                self.generate_map_immediately()
+
+    def generate_map_immediately(self, element=None):
+        """Generate map immediately (button press or timer expiry)."""
+        if self.is_generating:
+            self.logger.warning("Map generation already in progress - skipping")
+            return
+
+        self.logger.info("Starting immediate map generation")
+        self.is_generating = True
+        self.generation_pending = False
 
         # Gather all settings from sliders
+        config_params = self._gather_config_params()
+
+        # Run generation in thread to prevent freezing
+        self.generation_thread = threading.Thread(
+            target=self._generate_map_thread,
+            args=(config_params,),
+            daemon=True
+        )
+        self.generation_thread.start()
+
+    def _gather_config_params(self):
+        """Gather all configuration parameters from UI."""
         config_params = {
             'width': self.map_size,
             'height': self.map_size,
@@ -764,21 +852,220 @@ class MainMenuManager:
                         val += 1
                 config_params[param_name] = val
 
-        config = MapConfig(**config_params)
-        self.map_generator = MapGenerator(config)
-        self.current_map = self.map_generator.generate()
+        return config_params
 
-        # TASK 3: Reset camera to center of map
-        if self.camera:
-            map_center_world = self.map_size * self.preview_tile_size / 2.0
-            self.camera.pan_to(map_center_world, map_center_world, smooth=False)
-            self.camera.set_zoom(1.0)
+    def _generate_map_thread(self, config_params):
+        """Thread worker for map generation."""
+        try:
+            from main.game.data.maps.config import MapConfig
+            from main.game.data.maps.mapGen import MapGenerator
 
-        stats = self.map_generator.get_statistics()
-        self.logger.info(f"Map generated: {stats}")
+            self.logger.info(f"Generating map with params: {config_params}")
+
+            config = MapConfig(**config_params)
+            generator = MapGenerator(config)
+            generated_map = generator.generate()
+
+            # Store results
+            self.pending_config_params = (generator, generated_map)
+
+            stats = generator.get_statistics()
+            self.logger.info(f"Map generation complete: {stats}")
+
+        except Exception as e:
+            self.logger.error(f"Map generation failed: {e}", exc_info=True)
+            self.pending_config_params = None
+        finally:
+            self.is_generating = False
+
+    def _check_generation_complete(self):
+        """Check if generation thread completed and update map."""
+        if self.pending_config_params is not None:
+            self.map_generator, self.current_map = self.pending_config_params
+            self.pending_config_params = None
+
+            # Reset camera to center
+            if self.camera:
+                map_center_world = self.map_size * self.preview_tile_size / 2.0
+                self.camera.pan_to(map_center_world, map_center_world, smooth=False)
+                self.camera.set_zoom(1.0)
+
+            self.logger.info("Map applied to preview")
+
+    # TASK 2: Advanced settings panel
+    def toggle_advanced_settings(self, element=None):
+        """Toggle advanced settings panel visibility."""
+        self.advanced_settings_visible = not self.advanced_settings_visible
+
+        if self.advanced_settings_visible:
+            self._create_advanced_settings_panel()
+        else:
+            self._hide_advanced_settings_panel()
+
+    def _create_advanced_settings_panel(self):
+        """Create dynamic advanced settings panel from MapConfig."""
+        from main.game.data.maps.config import MapConfig
+        import inspect
+
+        self.logger.info("Creating advanced settings panel")
+
+        # Get MapConfig class
+        config_cls = MapConfig
+
+        # Get all attributes with their annotations
+        annotations = getattr(config_cls, '__annotations__', {})
+
+        # Create panel
+        panel_w = 400
+        panel_h = self.screen_height - 100
+        panel_x = int(self.screen_width * 0.22) + 20
+        panel_y = 50
+
+        self.advanced_settings_panel = self.init_ui(
+            "panel",
+            pygame.Rect(panel_x, panel_y, panel_w, panel_h),
+            self.manager
+        )
+
+        # Title
+        title = self.init_ui(
+            "label",
+            pygame.Rect(10, 10, panel_w - 20, 30),
+            self.manager,
+            container=self.advanced_settings_panel,
+            text="Advanced Settings (\\)"
+        )
+
+        # Scrollable area for settings
+        y_offset = 50
+        row_height = 60
+
+        # Get current config
+        current_config = MapConfig(width=self.map_size, height=self.map_size)
+
+        # Create UI elements for each field
+        for field_name, field_type in annotations.items():
+            if field_name.startswith('_'):
+                continue
+
+            current_value = getattr(current_config, field_name, None)
+            if current_value is None:
+                continue
+
+            # Determine field type
+            is_bool = isinstance(current_value, bool)
+            is_int = isinstance(current_value, int) and not is_bool
+            is_float = isinstance(current_value, float)
+            is_str = isinstance(current_value, str)
+
+            # Label
+            label = self.init_ui(
+                "label",
+                pygame.Rect(10, y_offset, panel_w - 20, 20),
+                self.manager,
+                container=self.advanced_settings_panel,
+                text=f"{field_name}: {current_value}"
+            )
+
+            # Input element
+            if is_bool:
+                # Dropdown for boolean
+                input_elem = self.init_ui(
+                    "dropdown",
+                    pygame.Rect(10, y_offset + 25, panel_w - 20, 30),
+                    self.manager,
+                    container=self.advanced_settings_panel,
+                    options_list=["True", "False"],
+                    starting_option="True" if current_value else "False"
+                )
+            elif is_int or is_float:
+                # Text entry for numbers
+                input_elem = self.init_ui(
+                    "text_entry",
+                    pygame.Rect(10, y_offset + 25, panel_w - 20, 30),
+                    self.manager,
+                    container=self.advanced_settings_panel
+                )
+                input_elem.set_text(str(current_value))
+            else:
+                # Text entry for strings
+                input_elem = self.init_ui(
+                    "text_entry",
+                    pygame.Rect(10, y_offset + 25, panel_w - 20, 30),
+                    self.manager,
+                    container=self.advanced_settings_panel
+                )
+                input_elem.set_text(str(current_value))
+
+            # Store reference
+            self.dynamic_settings_elements[field_name] = {
+                'label': label,
+                'input': input_elem,
+                'type': 'bool' if is_bool else ('int' if is_int else ('float' if is_float else 'str'))
+            }
+
+            y_offset += row_height
+
+            # Stop if too many fields (scrolling not implemented yet)
+            if y_offset > panel_h - 100:
+                break
+
+        # Apply button
+        apply_btn = self.init_ui(
+            "button",
+            pygame.Rect(10, panel_h - 50, panel_w - 20, 40),
+            self.manager,
+            container=self.advanced_settings_panel,
+            text="Apply Settings"
+        )
+        self.element_callbacks[apply_btn] = self._apply_advanced_settings
+
+    def _hide_advanced_settings_panel(self):
+        """Hide and destroy advanced settings panel."""
+        if self.advanced_settings_panel:
+            try:
+                self.advanced_settings_panel.kill()
+            except Exception:
+                pass
+            self.advanced_settings_panel = None
+        self.dynamic_settings_elements.clear()
+
+    def _apply_advanced_settings(self, element=None):
+        """Apply settings from advanced panel and regenerate map."""
+        self.logger.info("Applying advanced settings")
+
+        # Gather settings
+        config_params = self._gather_config_params()
+
+        # Add advanced settings
+        for field_name, elements in self.dynamic_settings_elements.items():
+            input_elem = elements['input']
+            field_type = elements['type']
+
+            try:
+                if field_type == 'bool':
+                    value = input_elem.selected_option[0] == "True"
+                elif field_type == 'int':
+                    value = int(input_elem.get_text())
+                elif field_type == 'float':
+                    value = float(input_elem.get_text())
+                else:
+                    value = input_elem.get_text()
+
+                config_params[field_name] = value
+            except Exception as e:
+                self.logger.warning(f"Failed to parse {field_name}: {e}")
+
+        # Trigger generation
+        self.generate_map_immediately()
+
+        # Hide panel
+        self.advanced_settings_visible = False
+        self._hide_advanced_settings_panel()
 
     def back_press(self, element=None):
         """Navigate back."""
+        self.logger.info("Back button pressed")
         if len(self.menu_stack) > 1:
             self.clear_element("all")
             self.menu_stack.pop()
@@ -857,6 +1144,7 @@ class MainMenuManager:
         if any(u.name == unit.name for u in self.player_loadout):
             return
         self.player_loadout.append(unit)
+        self.logger.info(f"Added {unit.name} to loadout")
         self.refresh_loadout_view()
 
     def select_loadout_unit(self, index):
@@ -879,10 +1167,12 @@ class MainMenuManager:
     def remove_selected_unit(self, element=None):
         """Remove selected unit from loadout."""
         if self.selected_loadout_index is not None and 0 <= self.selected_loadout_index < len(self.player_loadout):
-            self.player_loadout.pop(self.selected_loadout_index)
+            removed = self.player_loadout.pop(self.selected_loadout_index)
+            self.logger.info(f"Removed {removed.name} from loadout")
             self.selected_loadout_index = None
         elif self.player_loadout:
-            self.player_loadout.pop()
+            removed = self.player_loadout.pop()
+            self.logger.info(f"Removed {removed.name} from loadout")
         self.refresh_loadout_view()
 
     def process_events(self, events):
@@ -896,6 +1186,11 @@ class MainMenuManager:
 
         for event in events:
             self.manager.process_events(event)
+
+            # TASK 2: Toggle advanced settings with backslash
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_BACKSLASH:
+                if self.map_preview_active:
+                    self.toggle_advanced_settings()
 
             if event.type == pygame.USEREVENT:
                 user_type = getattr(event, "user_type", None)
@@ -913,27 +1208,23 @@ class MainMenuManager:
                             if result in ("map_generator", "start_game"):
                                 return result
 
-            # TASK 3: Camera controls - Middle mouse rotation
+            # Camera controls - Middle mouse rotation
             if self.map_preview_active and self.camera:
-                # Middle mouse press (start rotating)
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 2:
                     if self.mouse_over_preview:
                         self.preview_rotating = True
                         self.preview_last_mouse = event.pos
                         pygame.mouse.get_rel()
 
-                # Middle mouse release (stop rotating)
                 if event.type == pygame.MOUSEBUTTONUP and event.button == 2:
                     self.preview_rotating = False
 
-                # Mouse wheel zoom
                 if event.type == pygame.MOUSEWHEEL and self.mouse_over_preview:
                     if event.y > 0:
                         self.camera.zoom_in(steps=1)
                     else:
                         self.camera.zoom_out(steps=1)
 
-                # Mouse motion while rotating
                 if event.type == pygame.MOUSEMOTION and self.preview_rotating:
                     mx, my = event.pos
                     lx, ly = self.preview_last_mouse
@@ -974,12 +1265,16 @@ class MainMenuManager:
         return None
 
     def update_camera(self, dt):
-        """TASK 3: Update camera with WASD movement using camera.py."""
+        """Update camera with WASD movement and generation timer."""
+        # TASK 1: Update generation timer
+        self._update_generation_timer(dt)
+        self._check_generation_complete()
+
         if not self.map_preview_active or not self.mouse_over_preview or not self.camera:
             return
 
         keys = pygame.key.get_pressed()
-        move_speed = 300.0 * dt  # Pixels per second
+        move_speed = 300.0 * dt
 
         # WASD camera panning
         if keys[pygame.K_w] or keys[pygame.K_UP]:
@@ -991,24 +1286,46 @@ class MainMenuManager:
         if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
             self.camera.pan(move_speed, 0)
 
-        # Update camera smooth interpolation
         self.camera.update(dt)
 
     def draw(self):
         """Draw all UI and map preview."""
         self.screen.blit(self.static_surface, (0, 0))
 
-        # TASK 4: Draw 3D map preview with buildings and ramps
+        # Draw 3D map preview
         if self.map_preview_active and self.current_map is not None and self.camera:
             try:
                 self._draw_map_preview_3d()
             except Exception as e:
                 self.logger.error(f"Error drawing 3D preview: {e}", exc_info=True)
 
+        # Draw loading indicator if generating
+        if self.is_generating:
+            self._draw_loading_indicator()
+
         self.manager.draw_ui(self.screen)
 
+    def _draw_loading_indicator(self):
+        """Draw loading indicator during map generation."""
+        from main.game.ui.UItheme import UITheme
+
+        preview_x = int(self.screen_width * 0.22) + 10
+        preview_w = self.screen_width - preview_x
+        preview_h = self.screen_height
+
+        # Semi-transparent overlay
+        overlay = pygame.Surface((preview_w, preview_h), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 128))
+        self.screen.blit(overlay, (preview_x, 0))
+
+        # Loading text
+        font = pygame.font.SysFont('Arial', 24, bold=True)
+        text = font.render("Generating Map...", True, (255, 255, 255))
+        text_rect = text.get_rect(center=(preview_x + preview_w // 2, preview_h // 2))
+        self.screen.blit(text, text_rect)
+
     def _draw_map_preview_3d(self):
-        """TASK 4: Render map with 3D buildings and 45-degree ramps using camera.py."""
+        """Render map with 3D buildings and 45-degree ramps using camera.py."""
         from main.game.data.maps.terrain import plains, forest, urban, mountains, road, highway, debris
         from main.game.ui.UItheme import UITheme
 
@@ -1032,8 +1349,6 @@ class MainMenuManager:
         map_w = len(self.current_map[0]) if map_h > 0 else 0
 
         tile_px = self.preview_tile_size * self.camera.zoom
-
-        # Camera tilt for pseudo-3D
         camera_tilt = 0.55
 
         angle_rad = math.radians(self.camera_rotation)
@@ -1042,24 +1357,18 @@ class MainMenuManager:
 
         def project_point(wx, wy, z):
             """Project world point to screen using camera transform."""
-            # Convert tile coordinates to world pixels
             world_x = wx * self.preview_tile_size
             world_y = wy * self.preview_tile_size
-
-            # Apply elevation
             world_z = z * (self.preview_tile_size * 0.45)
 
-            # Transform to screen using camera
             screen_x, screen_y = self.camera.world_to_screen(world_x, world_y)
 
-            # Apply rotation
             offset_x = screen_x - preview_w / 2.0
             offset_y = screen_y - preview_h / 2.0
 
             rx = offset_x * cos_a - offset_y * sin_a
             ry = offset_x * sin_a + offset_y * cos_a
 
-            # Apply tilt and elevation
             ry = ry * camera_tilt - world_z * self.camera.zoom
 
             final_x = int(preview_w / 2.0 + rx)
@@ -1072,15 +1381,12 @@ class MainMenuManager:
         hovered = None
         if self.mouse_over_preview:
             mx, my = mouse_pos
-            # Simple raycast to find tile under mouse
-            # Test all tiles and find closest to mouse
             min_dist = float('inf')
             for y in range(map_h):
                 for x in range(map_w):
                     try:
                         cell = self.current_map[y][x]
                         elev = getattr(cell, "elevation", 0) or 0
-                        # Get center of tile
                         cx, cy = project_point(x + 0.5, y + 0.5, elev)
                         dist = math.sqrt((mx - preview_x - cx) ** 2 + (my - cy) ** 2)
                         if dist < min_dist and dist < tile_px:
@@ -1089,7 +1395,7 @@ class MainMenuManager:
                     except Exception:
                         continue
 
-        # Render tiles in painter's order (back to front)
+        # Render tiles in painter's order
         render_list = []
         for y in range(map_h):
             for x in range(map_w):
@@ -1098,7 +1404,6 @@ class MainMenuManager:
                 except Exception:
                     continue
 
-                # Calculate depth for sorting
                 elev = getattr(cell, "elevation", 0) or 0
                 rx = (x - map_w / 2.0) * cos_a - (y - map_h / 2.0) * sin_a
                 ry = (x - map_w / 2.0) * sin_a + (y - map_h / 2.0) * cos_a
@@ -1110,13 +1415,11 @@ class MainMenuManager:
         for _, x, y, cell in render_list:
             elev = getattr(cell, "elevation", 0) or 0
 
-            # Top face corners
             p0 = project_point(x, y, elev)
             p1 = project_point(x + 1, y, elev)
             p2 = project_point(x + 1, y + 1, elev)
             p3 = project_point(x, y + 1, elev)
 
-            # Base corners (ground level)
             b0 = project_point(x, y, 0)
             b1 = project_point(x + 1, y, 0)
             b2 = project_point(x + 1, y + 1, 0)
@@ -1138,12 +1441,11 @@ class MainMenuManager:
             if is_hover:
                 top_color = tuple(max(0, int(c * 0.65)) for c in top_color)
 
-            # TASK 4: Draw ramps as 45-degree slopes
+            # Draw ramps
             if cell.is_ramp:
                 ramp_dir = getattr(cell, 'ramp_direction', None)
                 ramp_to_elev = getattr(cell, 'ramp_elevation_to', elev + 1)
 
-                # Get elevated edge based on direction
                 if ramp_dir == 'north':
                     ramp_top = [project_point(x, y, ramp_to_elev), project_point(x + 1, y, ramp_to_elev)]
                     ramp_bottom = [p3, p2]
@@ -1160,7 +1462,6 @@ class MainMenuManager:
                     ramp_top = [p0, p1]
                     ramp_bottom = [p3, p2]
 
-                # Draw ramp surface (angled quad)
                 ramp_color = tuple(max(0, int(c * 0.8)) for c in base_color)
                 try:
                     pygame.draw.polygon(preview_surface, ramp_color,
@@ -1170,32 +1471,27 @@ class MainMenuManager:
                 except Exception:
                     pass
 
-            # TASK 4: Draw buildings as 3D boxes
+            # Draw buildings
             elif cell.is_building:
-                building_height = 2.0  # Extra height units
+                building_height = 2.0
 
-                # Building top corners (elevated)
                 bt0 = project_point(x + 0.2, y + 0.2, elev + building_height)
                 bt1 = project_point(x + 0.8, y + 0.2, elev + building_height)
                 bt2 = project_point(x + 0.8, y + 0.8, elev + building_height)
                 bt3 = project_point(x + 0.2, y + 0.8, elev + building_height)
 
-                # Building base corners
                 bb0 = project_point(x + 0.2, y + 0.2, elev)
                 bb1 = project_point(x + 0.8, y + 0.2, elev)
                 bb2 = project_point(x + 0.8, y + 0.8, elev)
                 bb3 = project_point(x + 0.2, y + 0.8, elev)
 
-                # Building colors
                 building_color = (80, 80, 100)
                 building_top_color = (100, 100, 120)
 
-                # Draw visible wall (front-facing)
                 try:
                     pts = [bt0, bt1, bt2, bt3]
                     base_pts = [bb0, bb1, bb2, bb3]
 
-                    # Find front edge (furthest back in screen space)
                     idx_sorted = sorted(range(4), key=lambda i: pts[i][1], reverse=True)
                     i1, i2 = idx_sorted[0], idx_sorted[1]
 
@@ -1204,20 +1500,17 @@ class MainMenuManager:
                     base_a = base_pts[i1]
                     base_b = base_pts[i2]
 
-                    # Draw wall quad
                     pygame.draw.polygon(preview_surface, building_color, [top_a, top_b, base_b, base_a])
                     pygame.draw.polygon(preview_surface, (60, 60, 80), [top_a, top_b, base_b, base_a], 1)
                 except Exception:
                     pass
 
-                # Draw building top
                 try:
                     pygame.draw.polygon(preview_surface, building_top_color, [bt0, bt1, bt2, bt3])
                     pygame.draw.polygon(preview_surface, UITheme.SECONDARY, [bt0, bt1, bt2, bt3], 1)
                 except Exception:
                     pass
 
-                # Draw ground tile underneath
                 try:
                     pygame.draw.polygon(preview_surface, top_color, [p0, p1, p2, p3])
                     pygame.draw.polygon(preview_surface, UITheme.SECONDARY, [p0, p1, p2, p3], 1)
@@ -1225,20 +1518,18 @@ class MainMenuManager:
                     pass
 
             else:
-                # Regular tile - draw top face
+                # Regular tile
                 try:
                     pygame.draw.polygon(preview_surface, top_color, [p0, p1, p2, p3])
                     pygame.draw.polygon(preview_surface, UITheme.SECONDARY, [p0, p1, p2, p3], 1)
                 except Exception:
                     pass
 
-                # Draw side face for elevated tiles
                 if elev > 0:
                     try:
                         pts = [p0, p1, p2, p3]
                         base_pts = [b0, b1, b2, b3]
 
-                        # Find visible edge
                         idx_sorted = sorted(range(4), key=lambda i: pts[i][1], reverse=True)
                         i1, i2 = idx_sorted[0], idx_sorted[1]
 
@@ -1253,7 +1544,7 @@ class MainMenuManager:
                     except Exception:
                         pass
 
-            # Draw tile type label if hovered
+            # Draw tile label if hovered
             if is_hover:
                 try:
                     font = pygame.font.SysFont('Arial', max(10, int(12 * self.camera.zoom)))
@@ -1266,10 +1557,8 @@ class MainMenuManager:
                 except Exception:
                     pass
 
-        # Blit preview to screen
         self.screen.blit(preview_surface, (preview_x, 0))
 
-        # Draw border
         preview_outer = pygame.Rect(preview_x, 0, preview_w, preview_h)
         try:
             pygame.draw.rect(self.screen, UITheme.SECONDARY, preview_outer, 2)
@@ -1310,7 +1599,7 @@ class MainMenuManager:
         if self.mouse_over_preview:
             try:
                 font = pygame.font.SysFont('Arial', 14)
-                hint = f"WASD: Move | Wheel: Zoom | Middle-drag: Rotate | Angle: {int(self.camera_rotation)}° | Zoom: {self.camera.zoom:.2f}x"
+                hint = f"WASD: Move | Wheel: Zoom | Middle-drag: Rotate | \\: Advanced | Angle: {int(self.camera_rotation)}° | Zoom: {self.camera.zoom:.2f}x"
                 text = font.render(hint, True, UITheme.TEXT)
                 text_rect = text.get_rect(centerx=preview_w // 2, top=10)
                 bg_rect = text_rect.inflate(20, 10)
