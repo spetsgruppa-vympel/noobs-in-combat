@@ -1,6 +1,5 @@
 import pygame
 import asyncio
-from main.config import color_print
 
 async def handle_input():
     while True:
